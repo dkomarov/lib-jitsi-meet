@@ -5,8 +5,9 @@ import isEqual from 'lodash.isequal';
 import { $iq, $msg, $pres, Strophe } from 'strophe.js';
 
 import * as JitsiTranscriptionStatus from '../../JitsiTranscriptionStatus';
-import * as MediaType from '../../service/RTC/MediaType';
-import XMPPEvents from '../../service/xmpp/XMPPEvents';
+import { MediaType } from '../../service/RTC/MediaType';
+import { VideoType } from '../../service/RTC/VideoType';
+import { XMPPEvents } from '../../service/xmpp/XMPPEvents';
 import GlobalOnErrorHandler from '../util/GlobalOnErrorHandler';
 import Listenable from '../util/Listenable';
 
@@ -109,6 +110,8 @@ export default class ChatRoom extends Listenable {
      * @param {boolean} options.disableDiscoInfo - when set to {@code false} will skip disco info.
      * This is intended to be used only for lobby rooms.
      * @param {boolean} options.enableLobby - when set to {@code false} will skip creating lobby room.
+     * @param {boolean} options.hiddenFromRecorderFeatureEnabled - when set to {@code true} we will check identity tag
+     * for node presence.
      */
     constructor(connection, jid, password, XMPP, options) {
         super();
@@ -164,16 +167,6 @@ export default class ChatRoom extends Listenable {
             this.presMap.nodes.push({
                 'tagName': 'stats-id',
                 'value': options.statsId
-            });
-        }
-
-        if (options.deploymentInfo && options.deploymentInfo.userRegion) {
-            this.presMap.nodes.push({
-                'tagName': 'region',
-                'attributes': {
-                    id: options.deploymentInfo.userRegion,
-                    xmlns: 'http://jitsi.org/jitsi-meet'
-                }
             });
         }
 
@@ -497,7 +490,13 @@ export default class ChatRoom extends Listenable {
 
             if (userInfo) {
                 identity.user = {};
-                for (const tag of [ 'id', 'name', 'avatar' ]) {
+                const tags = [ 'id', 'name', 'avatar' ];
+
+                if (this.options.hiddenFromRecorderFeatureEnabled) {
+                    tags.push('hidden-from-recorder');
+                }
+
+                for (const tag of tags) {
                     const child
                         = userInfo.children.find(c => c.tagName === tag);
 
@@ -1062,6 +1061,13 @@ export default class ChatRoom extends Listenable {
         const type = msg.getAttribute('type');
 
         if (type === 'error') {
+            const settingsErrorMsg = $(msg).find('>settings-error>text').text();
+
+            if (settingsErrorMsg.length) {
+                this.eventEmitter.emit(XMPPEvents.SETTINGS_ERROR_RECEIVED, settingsErrorMsg);
+
+                return true;
+            }
             const errorMsg = $(msg).find('>error>text').text();
 
             this.eventEmitter.emit(XMPPEvents.CHAT_ERROR_RECEIVED, errorMsg);
@@ -1188,11 +1194,19 @@ export default class ChatRoom extends Listenable {
                 + 'xmlns="urn:ietf:params:xml:ns:xmpp-stanzas"]').length) {
 
             // let's extract the lobby jid from the custom field
-            const lobbyRoomNode = $(pres).find('>lobbyroom');
+            const lobbyRoomNode = $(pres).find('>error[type="auth"]>lobbyroom');
             let lobbyRoomJid;
 
             if (lobbyRoomNode.length) {
                 lobbyRoomJid = lobbyRoomNode.text();
+            } else {
+                // let's fallback to old location of lobbyroom node, TODO: to be removed in the future once
+                // everything is updated
+                const lobbyRoomOldNode = $(pres).find('>lobbyroom');
+
+                if (lobbyRoomOldNode.length) {
+                    lobbyRoomJid = lobbyRoomOldNode.text();
+                }
             }
 
             this.eventEmitter.emit(XMPPEvents.ROOM_CONNECT_MEMBERS_ONLY_ERROR, lobbyRoomJid);
@@ -1215,7 +1229,7 @@ export default class ChatRoom extends Listenable {
         .c('query', { xmlns: 'http://jabber.org/protocol/muc#admin' })
         .c('item', {
             affiliation,
-            nick: Strophe.getResourceFromJid(jid)
+            jid: Strophe.getBareJidFromJid(jid)
         })
         .c('reason').t(`Your affiliation has been changed to '${affiliation}'.`)
         .up().up().up();
@@ -1361,7 +1375,7 @@ export default class ChatRoom extends Listenable {
                             xmlns: 'http://jabber.org/protocol/muc#admin' })
                         .c('item', {
                             'affiliation': 'member',
-                            'jid': m.jid
+                            'jid': Strophe.getBareJidFromJid(m.jid)
                         }).up().up());
                 }
             });
@@ -1612,7 +1626,7 @@ export default class ChatRoom extends Listenable {
         }
         const data = {
             muted: true, // muted by default
-            videoType: undefined // no video type by default
+            videoType: mediaType === MediaType.VIDEO ? VideoType.CAMERA : undefined // 'camera' by default
         };
         let mutedNode = null;
 

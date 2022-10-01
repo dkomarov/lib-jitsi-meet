@@ -1,6 +1,5 @@
-/* global $ */
-
 import { getLogger } from '@jitsi/logger';
+import $ from 'jquery';
 import { $msg, Strophe } from 'strophe.js';
 import 'strophejs-plugin-disco';
 
@@ -141,6 +140,9 @@ export default class XMPP extends Listenable {
         if (!this.options.deploymentInfo) {
             this.options.deploymentInfo = {};
         }
+
+        // Cache of components used for certain features.
+        this._components = [];
 
         initStropheNativePlugins();
 
@@ -434,14 +436,22 @@ export default class XMPP extends Listenable {
         identities.forEach(identity => {
             if (identity.type === 'av_moderation') {
                 this.avModerationComponentAddress = identity.name;
+                this._components.push(this.avModerationComponentAddress);
+            }
+
+            if (identity.type === 'end_conference') {
+                this.endConferenceComponentAddress = identity.name;
+                this._components.push(this.endConferenceComponentAddress);
             }
 
             if (identity.type === 'speakerstats') {
                 this.speakerStatsComponentAddress = identity.name;
+                this._components.push(this.speakerStatsComponentAddress);
             }
 
             if (identity.type === 'conference_duration') {
                 this.conferenceDurationComponentAddress = identity.name;
+                this._components.push(this.conferenceDurationComponentAddress);
             }
 
             if (identity.type === 'lobbyrooms') {
@@ -477,15 +487,18 @@ export default class XMPP extends Listenable {
 
             if (identity.type === 'breakout_rooms') {
                 this.breakoutRoomsComponentAddress = identity.name;
+                this._components.push(this.breakoutRoomsComponentAddress);
+            }
+
+            if (identity.type === 'room_metadata') {
+                this.roomMetadataComponentAddress = identity.name;
+                this._components.push(this.roomMetadataComponentAddress);
             }
         });
 
         this._maybeSendDeploymentInfoStat(true);
 
-        if (this.avModerationComponentAddress
-            || this.speakerStatsComponentAddress
-            || this.conferenceDurationComponentAddress
-            || this.breakoutRoomsComponentAddress) {
+        if (this._components.length > 0) {
             this.connection.addHandler(this._onPrivateMessage.bind(this), null, 'message', null, null);
         }
     }
@@ -911,8 +924,9 @@ export default class XMPP extends Listenable {
      * Notifies speaker stats component if available that we are the new
      * dominant speaker in the conference.
      * @param {String} roomJid - The room jid where the speaker event occurred.
+     * @param {boolean} silence - Whether the dominant speaker is silent or not.
      */
-    sendDominantSpeakerEvent(roomJid) {
+    sendDominantSpeakerEvent(roomJid, silence) {
         // no speaker stats component advertised
         if (!this.speakerStatsComponentAddress || !roomJid) {
             return;
@@ -922,7 +936,8 @@ export default class XMPP extends Listenable {
 
         msg.c('speakerstats', {
             xmlns: 'http://jitsi.org/jitmeet',
-            room: roomJid })
+            room: roomJid,
+            silence })
             .up();
 
         this.connection.send(msg);
@@ -1005,10 +1020,7 @@ export default class XMPP extends Listenable {
     _onPrivateMessage(msg) {
         const from = msg.getAttribute('from');
 
-        if (!(from === this.speakerStatsComponentAddress
-            || from === this.conferenceDurationComponentAddress
-            || from === this.avModerationComponentAddress
-            || from === this.breakoutRoomsComponentAddress)) {
+        if (!this._components.includes(from)) {
             return true;
         }
 
@@ -1028,6 +1040,8 @@ export default class XMPP extends Listenable {
             this.eventEmitter.emit(XMPPEvents.AV_MODERATION_RECEIVED, parsedJson);
         } else if (parsedJson[JITSI_MEET_MUC_TYPE] === 'breakout_rooms') {
             this.eventEmitter.emit(XMPPEvents.BREAKOUT_ROOMS_EVENT, parsedJson);
+        } else if (parsedJson[JITSI_MEET_MUC_TYPE] === 'room_metadata') {
+            this.eventEmitter.emit(XMPPEvents.ROOM_METADATA_EVENT, parsedJson);
         }
 
         return true;

@@ -7,7 +7,10 @@ import { MediaDirection } from '../../service/RTC/MediaDirection';
 import { MediaType } from '../../service/RTC/MediaType';
 import RTCEvents from '../../service/RTC/RTCEvents';
 import * as SignalingEvents from '../../service/RTC/SignalingEvents';
-import { getSourceNameForJitsiTrack } from '../../service/RTC/SignalingLayer';
+import {
+    getSourceIndexFromSourceName,
+    getSourceNameForJitsiTrack
+} from '../../service/RTC/SignalingLayer';
 import { VideoType } from '../../service/RTC/VideoType';
 import { SS_DEFAULT_FRAME_RATE } from '../RTC/ScreenObtainer';
 import browser from '../browser';
@@ -316,6 +319,13 @@ export default function TraceablePeerConnection(
      * @type {Map<string, number>}
      */
     this._senderMaxHeights = new Map();
+
+    /**
+     * Holds the RTCRtpTransceiver mids that the local tracks are attached to, mapped per their
+     * {@link JitsiLocalTrack.rtcId}.
+     * @type {Map<string, string>}
+     */
+    this._localTrackTransceiverMids = new Map();
 
     // override as desired
     this.trace = (what, info) => {
@@ -1967,6 +1977,30 @@ TraceablePeerConnection.prototype.findSenderForTrack = function(track) {
 };
 
 /**
+ * Processes the local description SDP and caches the mids of the mlines associated with the given tracks.
+ *
+ * @param {Array<JitsiLocalTrack>} localTracks - local tracks that are added to the peerconnection.
+ * @returns {void}
+ */
+TraceablePeerConnection.prototype.processLocalSdpForTransceiverInfo = function(localTracks) {
+    const localSdp = this.peerconnection.localDescription?.sdp;
+
+    if (!localSdp) {
+        return;
+    }
+
+    for (const localTrack of localTracks) {
+        const mediaType = localTrack.getType();
+        const parsedSdp = transform.parse(localSdp);
+        const mLine = parsedSdp.media.find(mline => mline.type === mediaType);
+
+        if (!this._localTrackTransceiverMids.has(localTrack.rtcId)) {
+            this._localTrackTransceiverMids.set(localTrack.rtcId, mLine.mid.toString());
+        }
+    }
+};
+
+/**
  * Replaces <tt>oldTrack</tt> with <tt>newTrack</tt> from the peer connection.
  * Either <tt>oldTrack</tt> or <tt>newTrack</tt> can be null; replacing a valid
  * <tt>oldTrack</tt> with a null <tt>newTrack</tt> effectively just removes
@@ -1985,42 +2019,26 @@ TraceablePeerConnection.prototype.replaceTrack = function(oldTrack, newTrack) {
         return Promise.resolve();
     }
 
-    // If a track is being added to the peerconnection for the first time, we want the source signaling to be sent to
-    // Jicofo before the mute state is sent over presence. Therefore, trigger a renegotiation in this case. If we
-    // rely on "negotiationneeded" fired by the browser to signal new ssrcs, the mute state in presence will be sent
-    // before the source signaling which is undesirable.
-    // Send the presence before signaling for a new screenshare source. This is needed for multi-stream support since
-    // videoType needs to be availble at remote track creation time so that a fake tile for screenshare can be added.
-    // FIXME - This check needs to be removed when the client switches to the bridge based signaling for tracks.
-    const isNewTrackScreenshare = !oldTrack
-        && newTrack?.getVideoType() === VideoType.DESKTOP
-        && FeatureFlags.isMultiStreamSupportEnabled()
-        && !this.isP2P; // negotiationneeded is not fired on p2p peerconnection
-    const negotiationNeeded = !isNewTrackScreenshare && Boolean(!oldTrack || !this.localTracks.has(oldTrack?.rtcId));
-
     if (this._usesUnifiedPlan) {
         logger.debug(`${this} TPC.replaceTrack using unified plan`);
         const mediaType = newTrack?.getType() ?? oldTrack?.getType();
-        const stream = newTrack?.getOriginalStream();
-        const promise = newTrack && !stream
 
-            // Ignore cases when the track is replaced while the device is in a muted state.
-            // The track will be replaced again on the peerconnection when the user unmutes.
-            ? Promise.resolve()
-            : this.tpcUtils.replaceTrack(oldTrack, newTrack);
-
-        return promise
+        return this.tpcUtils.replaceTrack(oldTrack, newTrack)
             .then(transceiver => {
+                if (oldTrack) {
+                    this.localTracks.delete(oldTrack.rtcId);
+                    this._localTrackTransceiverMids.delete(oldTrack.rtcId);
+                }
+
                 if (newTrack) {
                     if (newTrack.isAudioTrack()) {
                         this._hasHadAudioTrack = true;
                     } else {
                         this._hasHadVideoTrack = true;
                     }
+                    this._localTrackTransceiverMids.set(newTrack.rtcId, transceiver?.mid?.toString());
+                    this.localTracks.set(newTrack.rtcId, newTrack);
                 }
-
-                oldTrack && this.localTracks.delete(oldTrack.rtcId);
-                newTrack && this.localTracks.set(newTrack.rtcId, newTrack);
 
                 // Update the local SSRC cache for the case when one track gets replaced with another and no
                 // renegotiation is triggered as a result of this.
@@ -2065,8 +2083,7 @@ TraceablePeerConnection.prototype.replaceTrack = function(oldTrack, newTrack) {
                     ? Promise.resolve()
                     : this.tpcUtils.setEncodings(newTrack);
 
-                // Force renegotiation only when the source is added for the first time.
-                return configureEncodingsPromise.then(() => negotiationNeeded);
+                return configureEncodingsPromise.then(() => false);
             });
     }
 
@@ -3029,12 +3046,12 @@ TraceablePeerConnection.prototype._processLocalSSRCsMap = function(ssrcMap) {
 
         if (FeatureFlags.isMultiStreamSupportEnabled()) {
             sourceName = track.getSourceName();
-            sourceIndex = sourceName?.indexOf('-') + 2;
+            sourceIndex = getSourceIndexFromSourceName(sourceName);
         }
 
         const sourceIdentifier = this._usesUnifiedPlan
-            ? FeatureFlags.isMultiStreamSupportEnabled() && sourceIndex
-                ? `${track.getType()}-${sourceName.substr(sourceIndex, 1)}` : track.getType()
+            ? FeatureFlags.isMultiStreamSupportEnabled()
+                ? `${track.getType()}-${sourceIndex}` : track.getType()
             : track.storedMSID;
 
         if (ssrcMap.has(sourceIdentifier)) {

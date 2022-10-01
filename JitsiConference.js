@@ -1,7 +1,6 @@
-/* global $ */
-
 import { getLogger } from '@jitsi/logger';
 import EventEmitter from 'events';
+import $ from 'jquery';
 import isEqual from 'lodash.isequal';
 import { Strophe } from 'strophe.js';
 
@@ -732,6 +731,31 @@ JitsiConference.prototype.leave = async function(reason) {
 };
 
 /**
+ * Returns <tt>true</tt> if end conference support is enabled in the backend.
+ *
+ * @returns {boolean} whether end conference is supported in the backend.
+ */
+JitsiConference.prototype.isEndConferenceSupported = function() {
+    return Boolean(this.room && this.room.xmpp.endConferenceComponentAddress);
+};
+
+/**
+ * Ends the conference.
+ */
+JitsiConference.prototype.end = function() {
+    if (!this.isEndConferenceSupported()) {
+        logger.warn('Cannot end conference: is not supported.');
+
+        return;
+    }
+    if (!this.room) {
+        throw new Error('The conference has been already left');
+    }
+
+    this.room.end();
+};
+
+/**
  * Returns the currently active media session if any.
  *
  * @returns {JingleSessionPC|undefined}
@@ -1103,7 +1127,11 @@ JitsiConference.prototype.addTrack = function(track) {
             return Promise.resolve(track);
         }
 
-        if (FeatureFlags.isMultiStreamSupportEnabled() && mediaType === MediaType.VIDEO) {
+        // Currently, only adding multiple video streams of different video types is supported.
+        // TODO - remove this limitation once issues with jitsi-meet trying to add multiple camera streams is fixed.
+        if (FeatureFlags.isMultiStreamSupportEnabled()
+            && mediaType === MediaType.VIDEO
+            && !localTracks.find(t => t.getVideoType() === track.getVideoType())) {
             const sourceName = getSourceNameForJitsiTrack(
                 this.myUserId(),
                 mediaType,
@@ -4195,4 +4223,13 @@ JitsiConference.prototype.avModerationReject = function(mediaType, id) {
  */
 JitsiConference.prototype.getBreakoutRooms = function() {
     return this.room?.getBreakoutRooms();
+};
+
+/**
+ * Returns the metadata handler object.
+ *
+ * @returns {Object} the room metadata handler.
+ */
+JitsiConference.prototype.getMetadataHandler = function() {
+    return this.room?.getMetadataHandler();
 };

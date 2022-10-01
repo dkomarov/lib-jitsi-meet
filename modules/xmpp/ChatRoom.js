@@ -1,6 +1,5 @@
-/* global $ */
-
 import { getLogger } from '@jitsi/logger';
+import $ from 'jquery';
 import isEqual from 'lodash.isequal';
 import { $iq, $msg, $pres, Strophe } from 'strophe.js';
 
@@ -14,6 +13,7 @@ import Listenable from '../util/Listenable';
 import AVModeration from './AVModeration';
 import BreakoutRooms from './BreakoutRooms';
 import Lobby from './Lobby';
+import RoomMetadata from './RoomMetadata';
 import XmppConnection from './XmppConnection';
 import Moderator from './moderator';
 
@@ -142,6 +142,7 @@ export default class ChatRoom extends Listenable {
         }
         this.avModeration = new AVModeration(this);
         this.breakoutRooms = new BreakoutRooms(this);
+        this.roomMetadata = new RoomMetadata(this);
         this.initPresenceMap(options);
         this.lastPresences = {};
         this.phoneNumber = null;
@@ -350,6 +351,17 @@ export default class ChatRoom extends Listenable {
                 this.eventEmitter.emit(XMPPEvents.MUC_MEMBERS_ONLY_CHANGED, membersOnly);
             }
 
+            const roomMetadataEl
+                = $(result).find('>query>x[type="result"]>field[var="muc#roominfo_jitsimetadata"]>value');
+            const roomMetadataText = roomMetadataEl?.text();
+
+            if (roomMetadataText) {
+                try {
+                    this.roomMetadata._handleMessages(JSON.parse(roomMetadataText));
+                } catch (e) {
+                    logger.warn('Failed to set room metadata', e);
+                }
+            }
         }, error => {
             GlobalOnErrorHandler.callErrorHandler(error);
             logger.error('Error getting room info: ', error);
@@ -1730,6 +1742,13 @@ export default class ChatRoom extends Listenable {
     }
 
     /**
+     * @returns {RoomMetadata}
+     */
+    getMetadataHandler() {
+        return this.roomMetadata;
+    }
+
+    /**
      * Returns the phone number for joining the conference.
      */
     getPhoneNumber() {
@@ -1846,6 +1865,7 @@ export default class ChatRoom extends Listenable {
     leave(reason) {
         this.avModeration.dispose();
         this.breakoutRooms.dispose();
+        this.roomMetadata.dispose();
 
         const promises = [];
 
@@ -1874,6 +1894,24 @@ export default class ChatRoom extends Listenable {
         }));
 
         return Promise.allSettled(promises);
+    }
+
+    /**
+     * Ends the conference for all participants.
+     */
+    end() {
+        if (this.breakoutRooms.isBreakoutRoom()) {
+            logger.warn('Cannot end conference: this is a breakout room.');
+
+            return;
+        }
+
+        // Send the end conference message.
+        const msg = $msg({ to: this.xmpp.endConferenceComponentAddress });
+
+        msg.c('end_conference').up();
+
+        this.xmpp.connection.send(msg);
     }
 }
 

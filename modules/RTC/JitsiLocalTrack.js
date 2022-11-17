@@ -98,7 +98,7 @@ export default class JitsiLocalTrack extends JitsiTrack {
          */
         this.rtcId = rtcId;
         this.sourceId = sourceId;
-        this.sourceType = sourceType;
+        this.sourceType = sourceType ?? displaySurface;
 
         // Get the resolution from the track itself because it cannot be
         // certain which resolution webrtc has fallen back to using.
@@ -356,7 +356,7 @@ export default class JitsiLocalTrack extends JitsiTrack {
      */
     _setMuted(muted) {
         if (this.isMuted() === muted
-            && !(this.videoType === VideoType.DESKTOP && FeatureFlags.isMultiStreamSupportEnabled())) {
+            && !(this.videoType === VideoType.DESKTOP && FeatureFlags.isMultiStreamSendSupportEnabled())) {
             return Promise.resolve();
         }
 
@@ -374,7 +374,7 @@ export default class JitsiLocalTrack extends JitsiTrack {
         // the desktop track when screenshare is stopped. Later when screenshare is started again, the same sender will
         // be re-used without the need for signaling a new ssrc through source-add.
         if (this.isAudioTrack()
-                || (this.videoType === VideoType.DESKTOP && !FeatureFlags.isMultiStreamSupportEnabled())
+                || (this.videoType === VideoType.DESKTOP && !FeatureFlags.isMultiStreamSendSupportEnabled())
                 || !browser.doesVideoMuteByStreamRemove()) {
             logMuteInfo();
 
@@ -424,9 +424,7 @@ export default class JitsiLocalTrack extends JitsiTrack {
                     { constraints: { video: this._constraints } }));
 
             promise = promise.then(streamsInfo => {
-                // The track kind for presenter track is video as well.
-                const mediaType = this.getType() === MediaType.PRESENTER ? MediaType.VIDEO : this.getType();
-                const streamInfo = streamsInfo.find(info => info.track.kind === mediaType);
+                const streamInfo = streamsInfo.find(info => info.track.kind === this.getType());
 
                 if (streamInfo) {
                     this._setStream(streamInfo.stream);
@@ -592,19 +590,16 @@ export default class JitsiLocalTrack extends JitsiTrack {
      * @extends JitsiTrack#dispose
      * @returns {Promise}
      */
-    dispose() {
-        let promise = Promise.resolve();
+    async dispose() {
 
         // Remove the effect instead of stopping it so that the original stream is restored
         // on both the local track and on the peerconnection.
         if (this._streamEffect) {
-            promise = this.setEffect();
+            await this.setEffect();
         }
 
-        let removeTrackPromise = Promise.resolve();
-
         if (this.conference) {
-            removeTrackPromise = this.conference.removeTrack(this);
+            await this.conference.removeTrack(this);
         }
 
         if (this.stream) {
@@ -619,7 +614,7 @@ export default class JitsiLocalTrack extends JitsiTrack {
                 this._onAudioOutputDeviceChanged);
         }
 
-        return Promise.allSettled([ promise, removeTrackPromise ]).then(() => super.dispose());
+        return super.dispose();
     }
 
     /**

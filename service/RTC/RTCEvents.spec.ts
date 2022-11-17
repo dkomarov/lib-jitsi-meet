@@ -9,7 +9,6 @@ describe( "/service/RTC/RTCEvents members", () => {
         DATA_CHANNEL_OPEN,
         ENDPOINT_CONN_STATUS_CHANGED,
         DOMINANT_SPEAKER_CHANGED,
-        LASTN_ENDPOINT_CHANGED,
         FORWARDED_SOURCES_CHANGED,
         PERMISSIONS_CHANGED,
         SENDER_VIDEO_CONSTRAINTS_CHANGED,
@@ -31,6 +30,8 @@ describe( "/service/RTC/RTCEvents members", () => {
         ENDPOINT_STATS_RECEIVED,
         LOCAL_UFRAG_CHANGED,
         REMOTE_UFRAG_CHANGED,
+        VIDEO_SSRCS_REMAPPED,
+        AUDIO_SSRCS_REMAPPED,
         RTCEvents,
         default: RTCEventsDefault,
         ...others
@@ -42,7 +43,6 @@ describe( "/service/RTC/RTCEvents members", () => {
         expect( DATA_CHANNEL_OPEN ).toBe( 'rtc.data_channel_open' );
         expect( ENDPOINT_CONN_STATUS_CHANGED ).toBe( 'rtc.endpoint_conn_status_changed' );
         expect( DOMINANT_SPEAKER_CHANGED ).toBe( 'rtc.dominant_speaker_changed' );
-        expect( LASTN_ENDPOINT_CHANGED ).toBe( 'rtc.lastn_endpoint_changed' );
         expect( FORWARDED_SOURCES_CHANGED ).toBe( 'rtc.forwarded_sources_changed' );
         expect( PERMISSIONS_CHANGED ).toBe( 'rtc.permissions_changed' );
         expect( SENDER_VIDEO_CONSTRAINTS_CHANGED ).toBe( 'rtc.sender_video_constraints_changed' );
@@ -64,6 +64,8 @@ describe( "/service/RTC/RTCEvents members", () => {
         expect( ENDPOINT_STATS_RECEIVED ).toBe( 'rtc.endpoint_stats_received' );
         expect( LOCAL_UFRAG_CHANGED ).toBe( 'rtc.local_ufrag_changed' );
         expect( REMOTE_UFRAG_CHANGED ).toBe( 'rtc.remote_ufrag_changed' );
+        expect( VIDEO_SSRCS_REMAPPED ).toBe( 'rtc.video_ssrcs_remapped' );
+        expect( AUDIO_SSRCS_REMAPPED ).toBe( 'rtc.audio_ssrcs_remapped' );
 
         if ( RTCEvents ) {
             expect( RTCEvents.CREATE_ANSWER_FAILED ).toBe( 'rtc.create_answer_failed' );
@@ -71,7 +73,6 @@ describe( "/service/RTC/RTCEvents members", () => {
             expect( RTCEvents.DATA_CHANNEL_OPEN ).toBe( 'rtc.data_channel_open' );
             expect( RTCEvents.ENDPOINT_CONN_STATUS_CHANGED ).toBe( 'rtc.endpoint_conn_status_changed' );
             expect( RTCEvents.DOMINANT_SPEAKER_CHANGED ).toBe( 'rtc.dominant_speaker_changed' );
-            expect( RTCEvents.LASTN_ENDPOINT_CHANGED ).toBe( 'rtc.lastn_endpoint_changed' );
             expect( RTCEvents.PERMISSIONS_CHANGED ).toBe( 'rtc.permissions_changed' );
             expect( RTCEvents.SENDER_VIDEO_CONSTRAINTS_CHANGED ).toBe( 'rtc.sender_video_constraints_changed' );
             expect( RTCEvents.LASTN_VALUE_CHANGED ).toBe( 'rtc.lastn_value_changed' );
@@ -92,6 +93,8 @@ describe( "/service/RTC/RTCEvents members", () => {
             expect( RTCEvents.ENDPOINT_STATS_RECEIVED ).toBe( 'rtc.endpoint_stats_received' );
             expect( RTCEvents.LOCAL_UFRAG_CHANGED ).toBe( 'rtc.local_ufrag_changed' );
             expect( RTCEvents.REMOTE_UFRAG_CHANGED ).toBe( 'rtc.remote_ufrag_changed' );
+            expect( RTCEvents.VIDEO_SSRCS_REMAPPED ).toBe( 'rtc.video_ssrcs_remapped' );
+            expect( RTCEvents.AUDIO_SSRCS_REMAPPED ).toBe( 'rtc.audio_ssrcs_remapped' );
         }
 
         if ( RTCEventsDefault ) {
@@ -100,7 +103,6 @@ describe( "/service/RTC/RTCEvents members", () => {
             expect( RTCEventsDefault.DATA_CHANNEL_OPEN ).toBe( 'rtc.data_channel_open' );
             expect( RTCEventsDefault.ENDPOINT_CONN_STATUS_CHANGED ).toBe( 'rtc.endpoint_conn_status_changed' );
             expect( RTCEventsDefault.DOMINANT_SPEAKER_CHANGED ).toBe( 'rtc.dominant_speaker_changed' );
-            expect( RTCEventsDefault.LASTN_ENDPOINT_CHANGED ).toBe( 'rtc.lastn_endpoint_changed' );
             expect( RTCEventsDefault.PERMISSIONS_CHANGED ).toBe( 'rtc.permissions_changed' );
             expect( RTCEventsDefault.SENDER_VIDEO_CONSTRAINTS_CHANGED ).toBe( 'rtc.sender_video_constraints_changed' );
             expect( RTCEventsDefault.LASTN_VALUE_CHANGED ).toBe( 'rtc.lastn_value_changed' );
@@ -121,6 +123,8 @@ describe( "/service/RTC/RTCEvents members", () => {
             expect( RTCEventsDefault.ENDPOINT_STATS_RECEIVED ).toBe( 'rtc.endpoint_stats_received' );
             expect( RTCEventsDefault.LOCAL_UFRAG_CHANGED ).toBe( 'rtc.local_ufrag_changed' );
             expect( RTCEventsDefault.REMOTE_UFRAG_CHANGED ).toBe( 'rtc.remote_ufrag_changed' );
+            expect( RTCEventsDefault.VIDEO_SSRCS_REMAPPED ).toBe( 'rtc.video_ssrcs_remapped' );
+            expect( RTCEventsDefault.AUDIO_SSRCS_REMAPPED ).toBe( 'rtc.audio_ssrcs_remapped' );
         }
     } );
 

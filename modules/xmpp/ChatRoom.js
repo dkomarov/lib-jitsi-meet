@@ -440,8 +440,8 @@ export default class ChatRoom extends Listenable {
      * @param {Strophe.Status} status - The Strophe connection status.
      */
     onConnStatusChanged(status) {
-        // Send cached presence when the XMPP connection is re-established.
-        if (status === XmppConnection.Status.CONNECTED) {
+        // Send cached presence when the XMPP connection is re-established, only if needed
+        if (status === XmppConnection.Status.CONNECTED && this.presenceUpdateTime > this.presenceSyncTime) {
             this.sendPresence();
         }
     }
@@ -1582,65 +1582,14 @@ export default class ChatRoom extends Listenable {
     }
 
     /**
+     * Obtains the info about given media advertised (in legacy format) in the MUC presence of the participant
+     * identified by the given endpoint JID. This is for mantining interop with endpoints that do not support
+     * source-name signaling (Jigasi and very old mobile clients).
      *
-     * @param peerJid
-     */
-    getMemberRole(peerJid) {
-        if (this.members[peerJid]) {
-            return this.members[peerJid].role;
-        }
-
-        return null;
-    }
-
-    /**
-     *
-     * @param mute
-     */
-    addAudioInfoToPresence(mute) {
-        const audioMutedTagName = 'audiomuted';
-
-        // we skip adding it as muted is default value
-        if (mute && !this.getFromPresence(audioMutedTagName)) {
-            return false;
-        }
-
-        return this.addOrReplaceInPresence(
-            audioMutedTagName,
-            {
-                value: mute.toString()
-            });
-    }
-
-    /**
-     *
-     * @param mute
-     */
-    addVideoInfoToPresence(mute) {
-        const videoMutedTagName = 'videomuted';
-
-        // we skip adding it as muted is default value
-        if (mute && !this.getFromPresence(videoMutedTagName)) {
-            return false;
-        }
-
-        return this.addOrReplaceInPresence(
-            videoMutedTagName,
-            {
-                value: mute.toString()
-            });
-    }
-
-    /**
-     * Obtains the info about given media advertised in the MUC presence of
-     * the participant identified by the given endpoint JID.
-     * @param {string} endpointId the endpoint ID mapped to the participant
-     * which corresponds to MUC nickname.
-     * @param {MediaType} mediaType the type of the media for which presence
-     * info will be obtained.
-     * @return {PeerMediaInfo} presenceInfo an object with media presence
-     * info or <tt>null</tt> either if there is no presence available or if
-     * the media type given is invalid.
+     * @param {string} endpointId the endpoint ID mapped to the participant which corresponds to MUC nickname.
+     * @param {MediaType} mediaType the type of the media for which presence info will be obtained.
+     * @return {PeerMediaInfo} presenceInfo an object with media presence info or <tt>null</tt> either if there
+     * is no presence available or if the media type given is invalid.
      */
     getMediaPresenceInfo(endpointId, mediaType) {
         // Will figure out current muted status by looking up owner's presence
@@ -1680,6 +1629,18 @@ export default class ChatRoom extends Listenable {
         }
 
         return data;
+    }
+
+    /**
+     *
+     * @param peerJid
+     */
+    getMemberRole(peerJid) {
+        if (this.members[peerJid]) {
+            return this.members[peerJid].role;
+        }
+
+        return null;
     }
 
     /**

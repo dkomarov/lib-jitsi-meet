@@ -1,7 +1,6 @@
 import * as JitsiTrackEvents from '../../JitsiTrackEvents';
 import { createTtfmEvent } from '../../service/statistics/AnalyticsEvents';
 import TrackStreamingStatusImpl, { TrackStreamingStatus } from '../connectivity/TrackStreamingStatus';
-import FeatureFlags from '../flags/FeatureFlags';
 import Statistics from '../statistics/statistics';
 
 import JitsiTrack from './JitsiTrack';
@@ -131,8 +130,7 @@ export default class JitsiRemoteTrack extends JitsiTrack {
     _addEventListener(event, handler) {
         super.addListener(event, handler);
 
-        if (FeatureFlags.isSourceNameSignalingEnabled()
-            && event === JitsiTrackEvents.TRACK_STREAMING_STATUS_CHANGED
+        if (event === JitsiTrackEvents.TRACK_STREAMING_STATUS_CHANGED
             && this.listenerCount(JitsiTrackEvents.TRACK_STREAMING_STATUS_CHANGED)
             && !this._trackStreamingStatusImpl
         ) {
@@ -150,8 +148,7 @@ export default class JitsiRemoteTrack extends JitsiTrack {
     _removeEventListener(event, handler) {
         super.removeListener(event, handler);
 
-        if (FeatureFlags.isSourceNameSignalingEnabled()
-            && event === JitsiTrackEvents.TRACK_STREAMING_STATUS_CHANGED
+        if (event === JitsiTrackEvents.TRACK_STREAMING_STATUS_CHANGED
             && !this.listenerCount(JitsiTrackEvents.TRACK_STREAMING_STATUS_CHANGED)
         ) {
             this._disposeTrackStreamingStatus();
@@ -191,9 +188,7 @@ export default class JitsiRemoteTrack extends JitsiTrack {
      * @returns {Promise}
      */
     dispose() {
-        if (FeatureFlags.isSourceNameSignalingEnabled()) {
-            this._disposeTrackStreamingStatus();
-        }
+        this._disposeTrackStreamingStatus();
 
         return super.dispose();
     }
@@ -264,6 +259,18 @@ export default class JitsiRemoteTrack extends JitsiTrack {
      */
     getSourceName() {
         return this._sourceName;
+    }
+
+    /**
+     * Update the properties when the track is remapped to another source.
+     *
+     * @param {string} owner The endpoint ID of the new owner.
+     * @param {string} name The new source name.
+     */
+    setNewSource(owner, name) {
+        this.ownerEndpointId = owner;
+        this._sourceName = name;
+        this.emit(JitsiTrackEvents.TRACK_OWNER_CHANGED, owner);
     }
 
     /**
@@ -485,6 +492,6 @@ export default class JitsiRemoteTrack extends JitsiTrack {
      */
     toString() {
         return `RemoteTrack[userID: ${this.getParticipantId()}, type: ${this.getType()}, ssrc: ${
-            this.getSSRC()}, p2p: ${this.isP2P}, sourceName: ${this._sourceName}, status: ${this._getStatus()}]`;
+            this.getSSRC()}, p2p: ${this.isP2P}, sourceName: ${this._sourceName}, status: {${this._getStatus()}}]`;
     }
 }

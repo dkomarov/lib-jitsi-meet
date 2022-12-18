@@ -39,6 +39,10 @@ export default class BridgeChannel {
         // @type {RTCDataChannel|WebSocket}
         this._channel = null;
 
+        // Whether the channel is connected or not. It will start as undefined
+        // for the first connection attempt. Then transition to either true or false.
+        this._connected = undefined;
+
         // @type {EventEmitter}
         this._eventEmitter = emitter;
 
@@ -96,6 +100,18 @@ export default class BridgeChannel {
         let timeoutS = 1;
 
         const reload = () => {
+            const isConnecting = this._channel && (this._channel.readyState === 'connecting'
+                    || this._channel.readyState === WebSocket.CONNECTING);
+
+            // Should not spawn new websockets while one is already trying to connect.
+            if (isConnecting) {
+                // Timeout is still required as there is flag `_areRetriesEnabled` that
+                // blocks new retrying cycles until any channel opens in current cycle.
+                this._retryTimeout = setTimeout(reload, timeoutS * 1000);
+
+                return;
+            }
+
             if (this.isOpen()) {
                 return;
             }
@@ -298,11 +314,7 @@ export default class BridgeChannel {
         channel.onopen = () => {
             logger.info(`${this._mode} channel opened`);
 
-            // Code sample for sending string and/or binary data.
-            // Sends string message to the bridge:
-            //     channel.send("Hello bridge!");
-            // Sends 12 bytes binary message to the bridge:
-            //     channel.send(new ArrayBuffer(12));
+            this._connected = true;
 
             emitter.emit(RTCEvents.DATA_CHANNEL_OPEN);
         };
@@ -410,12 +422,33 @@ export default class BridgeChannel {
         };
 
         channel.onclose = event => {
-            logger.info(`Channel closed by ${this._closedFromClient ? 'client' : 'server'}`);
+            logger.debug(`Channel closed by ${this._closedFromClient ? 'client' : 'server'}`);
+
+            if (channel !== this._channel) {
+                logger.debug('Skip close handler, channel instance is not equal to stored one');
+
+                return;
+            }
 
             if (this._mode === 'websocket') {
                 if (!this._closedFromClient) {
-                    logger.error(`Channel closed: ${event.code} ${event.reason}`);
                     this._retryWebSocketConnection(event);
+                }
+            }
+
+            if (!this._closedFromClient) {
+                const { code, reason } = event;
+
+                logger.error(`Channel closed: ${code} ${reason}`);
+
+                // We only want to send this event the first time the failure happens.
+                if (typeof this._connected === 'undefined' || this._connected) {
+                    this._connected = false;
+
+                    emitter.emit(RTCEvents.DATA_CHANNEL_CLOSED, {
+                        code,
+                        reason
+                    });
                 }
             }
 

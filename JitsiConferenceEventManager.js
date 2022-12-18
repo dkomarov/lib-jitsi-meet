@@ -222,6 +222,10 @@ JitsiConferenceEventManager.prototype.setupChatRoomListeners = function() {
         JitsiConferenceEvents.CONFERENCE_FAILED,
         JitsiConferenceErrors.AUTHENTICATION_REQUIRED);
 
+    this.chatRoomForwarder.forward(XMPPEvents.REDIRECTED,
+        JitsiConferenceEvents.CONFERENCE_FAILED,
+        JitsiConferenceErrors.REDIRECTED);
+
     this.chatRoomForwarder.forward(XMPPEvents.BRIDGE_DOWN,
         JitsiConferenceEvents.CONFERENCE_FAILED,
         JitsiConferenceErrors.VIDEOBRIDGE_NOT_AVAILABLE);
@@ -563,6 +567,10 @@ JitsiConferenceEventManager.prototype.setupRTCListeners = function() {
             createConnectionStageReachedEvent(key, { value: now }));
 
         conference.eventEmitter.emit(JitsiConferenceEvents.DATA_CHANNEL_OPENED);
+    });
+
+    rtc.addListener(RTCEvents.DATA_CHANNEL_CLOSED, ev => {
+        conference.eventEmitter.emit(JitsiConferenceEvents.DATA_CHANNEL_CLOSED, ev);
     });
 
     rtc.addListener(RTCEvents.VIDEO_SSRCS_REMAPPED, msg => {

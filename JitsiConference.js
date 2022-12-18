@@ -28,6 +28,7 @@ import { E2EEncryption } from './modules/e2ee/E2EEncryption';
 import E2ePing from './modules/e2eping/e2eping';
 import Jvb121EventGenerator from './modules/event/Jvb121EventGenerator';
 import FeatureFlags from './modules/flags/FeatureFlags';
+import { LiteModeContext } from './modules/litemode/LiteModeContext';
 import ReceiveVideoController from './modules/qualitycontrol/ReceiveVideoController';
 import SendVideoController from './modules/qualitycontrol/SendVideoController';
 import RecordingManager from './modules/recording/RecordingManager';
@@ -280,6 +281,12 @@ export default function JitsiConference(options) {
         logger.info('End-to-End Encryption is supported');
 
         this._e2eEncryption = new E2EEncryption(this);
+    }
+
+    if (FeatureFlags.isRunInLiteModeEnabled()) {
+        logger.info('Lite mode enabled');
+
+        this._liteModeContext = new LiteModeContext(this);
     }
 
     /**
@@ -1020,15 +1027,15 @@ JitsiConference.prototype.setDisplayName = function(name) {
     if (this.room) {
         const nickKey = 'nick';
 
-        // if there is no display name already set, avoid setting an empty one
-        if (!name && !this.room.getFromPresence(nickKey)) {
-            return;
+        if (name) {
+            this.room.addOrReplaceInPresence(nickKey, {
+                attributes: { xmlns: 'http://jabber.org/protocol/nick' },
+                value: name
+            }) && this.room.sendPresence();
+        } else if (this.room.getFromPresence(nickKey)) {
+            this.room.removeFromPresence(nickKey);
+            this.room.sendPresence();
         }
-
-        this.room.addOrReplaceInPresence(nickKey, {
-            attributes: { xmlns: 'http://jabber.org/protocol/nick' },
-            value: name
-        }) && this.room.sendPresence();
     }
 };
 
@@ -1191,8 +1198,13 @@ JitsiConference.prototype._fireMuteChangeEvent = function(track) {
     }
 
     // Send the video type message to the bridge if the track is not removed/added to the pc as part of
-    // the mute/unmute operation. This currently happens only on Firefox.
-    if (track.isVideoTrack() && !browser.doesVideoMuteByStreamRemove()) {
+    // the mute/unmute operation.
+    // In React Native we mute the camera by setting track.enabled but that doesn't
+    // work for screen-share tracks, so do the remove-as-mute for those.
+    const doesVideoMuteByStreamRemove
+        = browser.isReactNative() ? track.videoType === VideoType.DESKTOP : browser.doesVideoMuteByStreamRemove();
+
+    if (track.isVideoTrack() && !doesVideoMuteByStreamRemove) {
         this._sendBridgeVideoTypeMessage(track);
     }
 
@@ -1303,6 +1315,9 @@ JitsiConference.prototype.replaceTrack = function(oldTrack, newTrack) {
     // Now replace the stream at the lower levels
     return this._doReplaceTrack(oldTrackBelongsToConference ? oldTrack : null, newTrack)
         .then(() => {
+            if (oldTrackBelongsToConference && !oldTrack.isMuted() && !newTrack) {
+                oldTrack._sendMuteStatus(true);
+            }
             oldTrackBelongsToConference && this.onLocalTrackRemoved(oldTrack);
             newTrack && this._setupNewTrack(newTrack);
 
@@ -1801,15 +1816,22 @@ JitsiConference.prototype.onMemberJoined = function(
     if (id === 'focus' || this.myUserId() === id) {
         return;
     }
-
-    const participant
-        = new JitsiParticipant(jid, this, nick, isHidden, statsID, status, identity);
+    const participant = new JitsiParticipant(jid, this, nick, isHidden, statsID, status, identity);
 
     participant.setConnectionJid(fullJid);
     participant.setRole(role);
     participant.setBotType(botType);
     participant.setFeatures(features);
     participant.setIsReplacing(isReplaceParticipant);
+
+    // Set remote tracks on the participant if source signaling was received before presence.
+    const remoteTracks = this.isP2PActive()
+        ? this.p2pJingleSession?.peerconnection.getRemoteTracks(id) ?? []
+        : this.jvbJingleSession?.peerconnection.getRemoteTracks(id) ?? [];
+
+    for (const track of remoteTracks) {
+        participant._tracks.push(track);
+    }
 
     this.participants[id] = participant;
     this.eventEmitter.emit(
@@ -2039,14 +2061,12 @@ JitsiConference.prototype.onRemoteTrackAdded = function(track) {
     const id = track.getParticipantId();
     const participant = this.getParticipantById(id);
 
-    if (!participant) {
-        logger.error(`No participant found for id: ${id}`);
-
-        return;
-    }
-
     // Add track to JitsiParticipant.
-    participant._tracks.push(track);
+    if (participant) {
+        participant._tracks.push(track);
+    } else {
+        logger.info(`Source signaling received before presence for ${id}`);
+    }
 
     if (this.transcriber) {
         this.transcriber.addTrack(track);
@@ -2238,7 +2258,7 @@ JitsiConference.prototype._acceptJvbIncomingCall = function(jingleSession, jingl
             this._signalingLayer,
             {
                 ...this.options.config,
-                enableInsertableStreams: this.isE2EEEnabled()
+                enableInsertableStreams: this.isE2EEEnabled() || FeatureFlags.isRunInLiteModeEnabled()
             });
     } catch (error) {
         GlobalOnErrorHandler.callErrorHandler(error);
@@ -2997,7 +3017,7 @@ JitsiConference.prototype._acceptP2PIncomingCall = function(jingleSession, jingl
         this._signalingLayer,
         {
             ...this.options.config,
-            enableInsertableStreams: this.isE2EEEnabled()
+            enableInsertableStreams: this.isE2EEEnabled() || FeatureFlags.isRunInLiteModeEnabled()
         });
 
     logger.info('Starting CallStats for P2P connection...');
@@ -3189,10 +3209,7 @@ JitsiConference.prototype._updateProperties = function(properties = {}) {
 
             // The number of jitsi-videobridge instances currently used for the
             // conference.
-            'bridge-count',
-
-            // The conference creation time (set by jicofo).
-            'created-ms'
+            'bridge-count'
         ];
 
         analyticsKeys.forEach(key => {
@@ -3368,7 +3385,7 @@ JitsiConference.prototype._startP2PSession = function(remoteJid) {
         this._signalingLayer,
         {
             ...this.options.config,
-            enableInsertableStreams: this.isE2EEEnabled()
+            enableInsertableStreams: this.isE2EEEnabled() || FeatureFlags.isRunInLiteModeEnabled()
         });
 
     logger.info('Starting CallStats for P2P connection...');
@@ -3710,7 +3727,7 @@ JitsiConference.prototype.getSpeakerStats = function() {
  */
 JitsiConference.prototype.sendFaceLandmarks = function(payload) {
     if (payload.faceExpression) {
-        this.xmpp.sendFaceExpressionEvent(this.room.roomjid, payload);
+        this.xmpp.sendFaceLandmarksEvent(this.room.roomjid, payload);
     }
 };
 
@@ -3894,6 +3911,40 @@ JitsiConference.prototype.toggleE2EE = function(enabled) {
  */
 JitsiConference.prototype.setMediaEncryptionKey = function(keyInfo) {
     this._e2eEncryption.setEncryptionKey(keyInfo);
+};
+
+/**
+ * Starts the participant verification process.
+ *
+ * @param {string} participantId The participant which will be marked as verified.
+ * @returns {void}
+ */
+JitsiConference.prototype.startVerification = function(participantId) {
+    const participant = this.getParticipantById(participantId);
+
+    if (!participant) {
+        return;
+    }
+
+    this._e2eEncryption.startVerification(participant);
+};
+
+/**
+ * Marks the given participant as verified. After this is done, MAC verification will
+ * be performed and an event will be emitted with the result.
+ *
+ * @param {string} participantId The participant which will be marked as verified.
+ * @param {boolean} isVerified - whether the verification was succesfull.
+ * @returns {void}
+ */
+JitsiConference.prototype.markParticipantVerified = function(participantId, isVerified) {
+    const participant = this.getParticipantById(participantId);
+
+    if (!participant) {
+        return;
+    }
+
+    this._e2eEncryption.markParticipantVerified(participant, isVerified);
 };
 
 /**

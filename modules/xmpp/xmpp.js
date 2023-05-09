@@ -8,6 +8,7 @@ import * as JitsiConnectionEvents from '../../JitsiConnectionEvents';
 import { XMPPEvents } from '../../service/xmpp/XMPPEvents';
 import browser from '../browser';
 import { E2EEncryption } from '../e2ee/E2EEncryption';
+import FeatureFlags from '../flags/FeatureFlags';
 import Statistics from '../statistics/statistics';
 import GlobalOnErrorHandler from '../util/GlobalOnErrorHandler';
 import Listenable from '../util/Listenable';
@@ -259,6 +260,19 @@ export default class XMPP extends Listenable {
 
         logger.debug('Receiving multiple video streams is enabled');
         this.caps.addFeature('http://jitsi.org/receive-multiple-video-streams');
+
+        // Advertise support for ssrc-rewriting.
+        if (FeatureFlags.isSsrcRewritingSupported()) {
+            this.caps.addFeature('http://jitsi.org/ssrc-rewriting-1');
+        }
+
+        // Use "-1" as a version that we can bump later. This should match
+        // the version added in moderator.js, this one here is mostly defined
+        // for keeping stats, since it is not made available to jocofo at
+        // the time of the initial conference-request.
+        if (FeatureFlags.isJoinAsVisitorSupported()) {
+            this.caps.addFeature('http://jitsi.org/visitors-1');
+        }
     }
 
     /**
@@ -781,8 +795,8 @@ export default class XMPP extends Listenable {
         this.disconnectInProgress = new Promise(resolve => {
             const disconnectListener = (credentials, status) => {
                 if (status === Strophe.Status.DISCONNECTED) {
-                    resolve();
                     this.eventEmitter.removeListener(XMPPEvents.CONNECTION_STATUS_CHANGED, disconnectListener);
+                    resolve();
                 }
             };
 

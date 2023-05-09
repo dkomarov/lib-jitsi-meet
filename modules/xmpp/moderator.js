@@ -1,8 +1,9 @@
 /* eslint-disable newline-per-chained-call */
 import { getLogger } from '@jitsi/logger';
 import $ from 'jquery';
-import { $iq } from 'strophe.js';
+import { $iq, Strophe } from 'strophe.js';
 
+import FeatureFlags from '../flags/FeatureFlags';
 import Settings from '../settings/Settings';
 
 const AuthenticationEvents
@@ -216,6 +217,11 @@ Moderator.prototype._createConferenceIq = function() {
                 }).up();
         }
     }
+    if (FeatureFlags.isJoinAsVisitorSupported()) {
+        elem.c('property', {
+            name: 'visitors-version',
+            value: 1 }).up();
+    }
 
     return elem;
 };
@@ -339,7 +345,8 @@ Moderator.prototype._handleSuccess = function(conferenceRequest, callback) {
         // Reset the non-error timeout (because we've succeeded here).
         this.getNextTimeout(true);
 
-        if (conferenceRequest.vnode) {
+        // we want to ignore redirects when this is jibri (record/live-stream or a sip jibri)
+        if (conferenceRequest.vnode && !this.options.iAmRecorder && !this.options.iAmSipGateway) {
             logger.warn(`Redirected to: ${conferenceRequest.vnode} with focusJid ${conferenceRequest.focusJid} }`);
 
             this.eventEmitter.emit(XMPPEvents.REDIRECTED, conferenceRequest.vnode, conferenceRequest.focusJid);
@@ -433,6 +440,12 @@ Moderator.prototype._handleIqError = function(error, callback) {
 
     // Not authorized to create new room
     const notAuthorized = $(error).find('>error>not-authorized').length > 0;
+
+    if (notAuthorized && Strophe.getDomainFromJid(error.getAttribute('to')) !== this.options.hosts.anonymousdomain) {
+        // FIXME "is external" should come either from the focus or
+        // config.js
+        this.externalAuthEnabled = true;
+    }
 
     this._handleError(invalidSession, notAuthorized, callback);
 };

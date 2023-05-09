@@ -225,6 +225,7 @@ JitsiConferenceEventManager.prototype.setupChatRoomListeners = function() {
     this.chatRoomForwarder.forward(XMPPEvents.REDIRECTED,
         JitsiConferenceEvents.CONFERENCE_FAILED,
         JitsiConferenceErrors.REDIRECTED);
+    chatRoom.addListener(XMPPEvents.REDIRECTED, () => conference.leave());
 
     this.chatRoomForwarder.forward(XMPPEvents.BRIDGE_DOWN,
         JitsiConferenceEvents.CONFERENCE_FAILED,
@@ -395,12 +396,12 @@ JitsiConferenceEventManager.prototype.setupChatRoomListeners = function() {
         XMPPEvents.MESSAGE_RECEIVED,
 
         // eslint-disable-next-line max-params
-        (jid, txt, myJid, ts) => {
+        (jid, txt, myJid, ts, nick, isGuest) => {
             const id = Strophe.getResourceFromJid(jid);
 
             conference.eventEmitter.emit(
                 JitsiConferenceEvents.MESSAGE_RECEIVED,
-                id, txt, ts);
+                id, txt, ts, nick, isGuest);
         });
 
     chatRoom.addListener(
@@ -574,15 +575,15 @@ JitsiConferenceEventManager.prototype.setupRTCListeners = function() {
     });
 
     rtc.addListener(RTCEvents.VIDEO_SSRCS_REMAPPED, msg => {
-        const sess = this.conference.getActiveMediaSession();
-
-        sess.videoSsrcsRemapped(msg);
+        for (const session of this.conference.getMediaSessions()) {
+            session.processSourceMap(msg, MediaType.VIDEO);
+        }
     });
 
     rtc.addListener(RTCEvents.AUDIO_SSRCS_REMAPPED, msg => {
-        const sess = this.conference.getActiveMediaSession();
-
-        sess.audioSsrcsRemapped(msg);
+        for (const session of this.conference.getMediaSessions()) {
+            session.processSourceMap(msg, MediaType.AUDIO);
+        }
     });
 
     rtc.addListener(RTCEvents.ENDPOINT_MESSAGE_RECEIVED,

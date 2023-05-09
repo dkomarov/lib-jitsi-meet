@@ -135,12 +135,8 @@ const ScreenObtainer = {
      * @param {Object} options - Optional parameters.
      */
     obtainScreenOnElectron(onSuccess, onFailure, options = {}) {
-        if (
-            window.JitsiMeetScreenObtainer &&
-            window.JitsiMeetScreenObtainer.openDesktopPicker
-        ) {
-            const { desktopSharingFrameRate, desktopSharingSources } =
-                this.options;
+        if (window.JitsiMeetScreenObtainer && window.JitsiMeetScreenObtainer.openDesktopPicker) {
+            const { desktopSharingFrameRate, desktopSharingResolution, desktopSharingSources } = this.options;
 
             window.JitsiMeetScreenObtainer.openDesktopPicker(
                 {
@@ -181,16 +177,14 @@ const ScreenObtainer = {
                                 mandatory: {
                                     chromeMediaSource: "desktop",
                                     chromeMediaSourceId: streamId,
-                                    minFrameRate:
-                                        desktopSharingFrameRate?.min ??
-                                        SS_DEFAULT_FRAME_RATE,
-                                    maxFrameRate:
-                                        desktopSharingFrameRate?.max ??
-                                        SS_DEFAULT_FRAME_RATE,
-                                    maxWidth: window.screen.width,
-                                    maxHeight: window.screen.height,
-                                },
-                            },
+                                    minFrameRate: desktopSharingFrameRate?.min ?? SS_DEFAULT_FRAME_RATE,
+                                    maxFrameRate: desktopSharingFrameRate?.max ?? SS_DEFAULT_FRAME_RATE,
+                                    minWidth: desktopSharingResolution?.width?.min,
+                                    minHeight: desktopSharingResolution?.height?.min,
+                                    maxWidth: desktopSharingResolution?.width?.max ?? window.screen.width,
+                                    maxHeight: desktopSharingResolution?.height?.max ?? window.screen.height
+                                }
+                            }
                         };
 
                         // We have to use the old API on Electron to get a desktop stream.
@@ -269,7 +263,7 @@ const ScreenObtainer = {
             // Set bogus resolution constraints to work around
             // https://bugs.chromium.org/p/chromium/issues/detail?id=1056311 for low fps screenshare. Capturing SS at
             // very high resolutions restricts the framerate. Therefore, skip this hack when capture fps > 5 fps.
-            if (desktopSharingFrameRate?.max <= SS_DEFAULT_FRAME_RATE) {
+            if (!(desktopSharingFrameRate?.max > SS_DEFAULT_FRAME_RATE)) {
                 video.height = 99999;
                 video.width = 99999;
             }

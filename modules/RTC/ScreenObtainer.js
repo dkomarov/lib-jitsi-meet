@@ -280,7 +280,9 @@ const ScreenObtainer = {
         }
 
         const constraints = {
-            video,
+            video: {
+                displaySurface: "monitor",
+            },
             audio,
             cursor: "always",
         };

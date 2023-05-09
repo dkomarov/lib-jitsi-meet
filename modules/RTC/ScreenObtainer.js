@@ -1,9 +1,8 @@
+import JitsiTrackError from "../../JitsiTrackError";
+import * as JitsiTrackErrors from "../../JitsiTrackErrors";
+import browser from "../browser";
 
-import JitsiTrackError from '../../JitsiTrackError';
-import * as JitsiTrackErrors from '../../JitsiTrackErrors';
-import browser from '../browser';
-
-const logger = require('@jitsi/logger').getLogger(__filename);
+const logger = require("@jitsi/logger").getLogger(__filename);
 
 /**
  * The default frame rate for Screen Sharing.
@@ -34,7 +33,7 @@ const ScreenObtainer = {
         this.obtainStream = this._createObtainStreamMethod();
 
         if (!this.obtainStream) {
-            logger.info('Desktop sharing disabled');
+            logger.info("Desktop sharing disabled");
         }
     },
 
@@ -69,26 +68,33 @@ const ScreenObtainer = {
                         // but this is what we are receiving from GUM when the
                         // streamId for the desktop sharing is "".
 
-                        if (error && error.name === 'InvalidStateError') {
+                        if (error && error.name === "InvalidStateError") {
                             jitsiError = new JitsiTrackError(
                                 JitsiTrackErrors.SCREENSHARING_USER_CANCELED
                             );
                         } else {
                             jitsiError = new JitsiTrackError(
-                                error, constraints, [ 'desktop' ]);
+                                error,
+                                constraints,
+                                ["desktop"]
+                            );
                         }
-                        (typeof onFailure === 'function')
-                            && onFailure(jitsiError);
-                    });
+                        typeof onFailure === "function" &&
+                            onFailure(jitsiError);
+                    }
+                );
             };
         } else if (browser.isElectron()) {
             return this.obtainScreenOnElectron;
-        } else if (browser.isReactNative() && browser.supportsGetDisplayMedia()) {
+        } else if (
+            browser.isReactNative() &&
+            browser.supportsGetDisplayMedia()
+        ) {
             return this.obtainScreenFromGetDisplayMediaRN;
         } else if (browser.supportsGetDisplayMedia()) {
             return this.obtainScreenFromGetDisplayMedia;
         }
-        logger.log('Screen sharing not supported on ', browser.getName());
+        logger.log("Screen sharing not supported on ", browser.getName());
 
         return null;
     },
@@ -100,12 +106,14 @@ const ScreenObtainer = {
      */
     _getAudioConstraints() {
         const { audioQuality } = this.options;
-        const audio = audioQuality?.stereo ? {
-            autoGainControl: false,
-            channelCount: 2,
-            echoCancellation: false,
-            noiseSuppression: false
-        } : true;
+        const audio = audioQuality?.stereo
+            ? {
+                  autoGainControl: false,
+                  channelCount: 2,
+                  echoCancellation: false,
+                  noiseSuppression: false,
+              }
+            : true;
 
         return audio;
     },
@@ -127,13 +135,17 @@ const ScreenObtainer = {
      * @param {Object} options - Optional parameters.
      */
     obtainScreenOnElectron(onSuccess, onFailure, options = {}) {
-        if (window.JitsiMeetScreenObtainer && window.JitsiMeetScreenObtainer.openDesktopPicker) {
-            const { desktopSharingFrameRate, desktopSharingSources } = this.options;
+        if (
+            window.JitsiMeetScreenObtainer &&
+            window.JitsiMeetScreenObtainer.openDesktopPicker
+        ) {
+            const { desktopSharingFrameRate, desktopSharingSources } =
+                this.options;
 
             window.JitsiMeetScreenObtainer.openDesktopPicker(
                 {
-                    desktopSharingSources:
-                        options.desktopSharingSources || desktopSharingSources || [ 'screen', 'window' ]
+                    desktopSharingSources: options.desktopSharingSources ||
+                        desktopSharingSources || ["screen", "window"],
                 },
                 (streamId, streamType, screenShareAudio = false) => {
                     if (streamId) {
@@ -141,11 +153,12 @@ const ScreenObtainer = {
 
                         if (screenShareAudio) {
                             audioConstraints = {};
-                            const optionalConstraints = this._getAudioConstraints();
+                            const optionalConstraints =
+                                this._getAudioConstraints();
 
-                            if (typeof optionalConstraints !== 'boolean') {
+                            if (typeof optionalConstraints !== "boolean") {
                                 audioConstraints = {
-                                    optional: optionalConstraints
+                                    optional: optionalConstraints,
                                 };
                             }
 
@@ -155,9 +168,9 @@ const ScreenObtainer = {
                             // which, in the case a users has multiple monitors, leads to them being shared all
                             // at once. However we tested with chromeMediaSourceId present and it seems to be
                             // working properly.
-                            if (streamType === 'screen') {
+                            if (streamType === "screen") {
                                 audioConstraints.mandatory = {
-                                    chromeMediaSource: 'desktop'
+                                    chromeMediaSource: "desktop",
                                 };
                             }
                         }
@@ -166,37 +179,55 @@ const ScreenObtainer = {
                             audio: audioConstraints,
                             video: {
                                 mandatory: {
-                                    chromeMediaSource: 'desktop',
+                                    chromeMediaSource: "desktop",
                                     chromeMediaSourceId: streamId,
-                                    minFrameRate: desktopSharingFrameRate?.min ?? SS_DEFAULT_FRAME_RATE,
-                                    maxFrameRate: desktopSharingFrameRate?.max ?? SS_DEFAULT_FRAME_RATE,
+                                    minFrameRate:
+                                        desktopSharingFrameRate?.min ??
+                                        SS_DEFAULT_FRAME_RATE,
+                                    maxFrameRate:
+                                        desktopSharingFrameRate?.max ??
+                                        SS_DEFAULT_FRAME_RATE,
                                     maxWidth: window.screen.width,
-                                    maxHeight: window.screen.height
-                                }
-                            }
+                                    maxHeight: window.screen.height,
+                                },
+                            },
                         };
 
                         // We have to use the old API on Electron to get a desktop stream.
-                        navigator.mediaDevices.getUserMedia(constraints)
-                            .then(stream => onSuccess({
-                                stream,
-                                sourceId: streamId,
-                                sourceType: streamType
-                            }), onFailure);
+                        navigator.mediaDevices.getUserMedia(constraints).then(
+                            (stream) =>
+                                onSuccess({
+                                    stream,
+                                    sourceId: streamId,
+                                    sourceType: streamType,
+                                }),
+                            onFailure
+                        );
                     } else {
                         // As noted in Chrome Desktop Capture API:
                         // If user didn't select any source (i.e. canceled the prompt)
                         // then the callback is called with an empty streamId.
-                        onFailure(new JitsiTrackError(JitsiTrackErrors.SCREENSHARING_USER_CANCELED));
+                        onFailure(
+                            new JitsiTrackError(
+                                JitsiTrackErrors.SCREENSHARING_USER_CANCELED
+                            )
+                        );
                     }
                 },
-                err => onFailure(new JitsiTrackError(
-                    JitsiTrackErrors.ELECTRON_DESKTOP_PICKER_ERROR,
-                    err
-                ))
+                (err) =>
+                    onFailure(
+                        new JitsiTrackError(
+                            JitsiTrackErrors.ELECTRON_DESKTOP_PICKER_ERROR,
+                            err
+                        )
+                    )
             );
         } else {
-            onFailure(new JitsiTrackError(JitsiTrackErrors.ELECTRON_DESKTOP_PICKER_NOT_FOUND));
+            onFailure(
+                new JitsiTrackError(
+                    JitsiTrackErrors.ELECTRON_DESKTOP_PICKER_NOT_FOUND
+                )
+            );
         }
     },
 
@@ -213,14 +244,16 @@ const ScreenObtainer = {
             getDisplayMedia = navigator.getDisplayMedia.bind(navigator);
         } else {
             // eslint-disable-next-line max-len
-            getDisplayMedia = navigator.mediaDevices.getDisplayMedia.bind(navigator.mediaDevices);
+            getDisplayMedia = navigator.mediaDevices.getDisplayMedia.bind(
+                navigator.mediaDevices
+            );
         }
 
         const audio = this._getAudioConstraints();
         let video = {};
         const { desktopSharingFrameRate } = this.options;
 
-        if (typeof desktopSharingFrameRate === 'object') {
+        if (typeof desktopSharingFrameRate === "object") {
             video.frameRate = desktopSharingFrameRate;
         }
 
@@ -230,7 +263,8 @@ const ScreenObtainer = {
 
         if (browser.isChromiumBased()) {
             // Allow users to seamlessly switch which tab they are sharing without having to select the tab again.
-            browser.isVersionGreaterThan(106) && (video.surfaceSwitching = 'include');
+            browser.isVersionGreaterThan(106) &&
+                (video.surfaceSwitching = "include");
 
             // Set bogus resolution constraints to work around
             // https://bugs.chromium.org/p/chromium/issues/detail?id=1056311 for low fps screenshare. Capturing SS at
@@ -248,36 +282,49 @@ const ScreenObtainer = {
         const constraints = {
             video,
             audio,
-            cursor: 'always'
+            cursor: "always",
         };
 
-        logger.info('Using getDisplayMedia for screen sharing', constraints);
+        logger.info("Using getDisplayMedia for screen sharing", constraints);
 
         getDisplayMedia(constraints)
-            .then(stream => {
+            .then((stream) => {
                 callback({
                     stream,
-                    sourceId: stream.id
+                    sourceId: stream.id,
                 });
             })
-            .catch(error => {
+            .catch((error) => {
                 const errorDetails = {
                     errorName: error && error.name,
                     errorMsg: error && error.message,
-                    errorStack: error && error.stack
+                    errorStack: error && error.stack,
                 };
 
-                logger.error('getDisplayMedia error', constraints, errorDetails);
+                logger.error(
+                    "getDisplayMedia error",
+                    constraints,
+                    errorDetails
+                );
 
-                if (errorDetails.errorMsg && errorDetails.errorMsg.indexOf('denied by system') !== -1) {
+                if (
+                    errorDetails.errorMsg &&
+                    errorDetails.errorMsg.indexOf("denied by system") !== -1
+                ) {
                     // On Chrome this is the only thing different between error returned when user cancels
                     // and when no permission was given on the OS level.
-                    errorCallback(new JitsiTrackError(JitsiTrackErrors.PERMISSION_DENIED));
+                    errorCallback(
+                        new JitsiTrackError(JitsiTrackErrors.PERMISSION_DENIED)
+                    );
 
                     return;
                 }
 
-                errorCallback(new JitsiTrackError(JitsiTrackErrors.SCREENSHARING_USER_CANCELED));
+                errorCallback(
+                    new JitsiTrackError(
+                        JitsiTrackErrors.SCREENSHARING_USER_CANCELED
+                    )
+                );
             });
     },
 
@@ -288,17 +335,22 @@ const ScreenObtainer = {
      * @param errorCallback - The error callback.
      */
     obtainScreenFromGetDisplayMediaRN(callback, errorCallback) {
-        logger.info('Using getDisplayMedia for screen sharing');
+        logger.info("Using getDisplayMedia for screen sharing");
 
-        navigator.mediaDevices.getDisplayMedia({ video: true })
-            .then(stream => {
+        navigator.mediaDevices
+            .getDisplayMedia({ video: true })
+            .then((stream) => {
                 callback({
                     stream,
-                    sourceId: stream.id });
+                    sourceId: stream.id,
+                });
             })
             .catch(() => {
-                errorCallback(new JitsiTrackError(JitsiTrackErrors
-                    .SCREENSHARING_USER_CANCELED));
+                errorCallback(
+                    new JitsiTrackError(
+                        JitsiTrackErrors.SCREENSHARING_USER_CANCELED
+                    )
+                );
             });
     },
 
@@ -313,9 +365,9 @@ const ScreenObtainer = {
 
         this.options.desktopSharingFrameRate = {
             min: SS_DEFAULT_FRAME_RATE,
-            max: maxFps
+            max: maxFps,
         };
-    }
+    },
 };
 
 export default ScreenObtainer;

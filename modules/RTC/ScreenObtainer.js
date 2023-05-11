@@ -135,8 +135,15 @@ const ScreenObtainer = {
      * @param {Object} options - Optional parameters.
      */
     obtainScreenOnElectron(onSuccess, onFailure, options = {}) {
-        if (window.JitsiMeetScreenObtainer && window.JitsiMeetScreenObtainer.openDesktopPicker) {
-            const { desktopSharingFrameRate, desktopSharingResolution, desktopSharingSources } = this.options;
+        if (
+            window.JitsiMeetScreenObtainer &&
+            window.JitsiMeetScreenObtainer.openDesktopPicker
+        ) {
+            const {
+                desktopSharingFrameRate,
+                desktopSharingResolution,
+                desktopSharingSources,
+            } = this.options;
 
             window.JitsiMeetScreenObtainer.openDesktopPicker(
                 {
@@ -177,14 +184,24 @@ const ScreenObtainer = {
                                 mandatory: {
                                     chromeMediaSource: "desktop",
                                     chromeMediaSourceId: streamId,
-                                    minFrameRate: desktopSharingFrameRate?.min ?? SS_DEFAULT_FRAME_RATE,
-                                    maxFrameRate: desktopSharingFrameRate?.max ?? SS_DEFAULT_FRAME_RATE,
-                                    minWidth: desktopSharingResolution?.width?.min,
-                                    minHeight: desktopSharingResolution?.height?.min,
-                                    maxWidth: desktopSharingResolution?.width?.max ?? window.screen.width,
-                                    maxHeight: desktopSharingResolution?.height?.max ?? window.screen.height
-                                }
-                            }
+                                    minFrameRate:
+                                        desktopSharingFrameRate?.min ??
+                                        SS_DEFAULT_FRAME_RATE,
+                                    maxFrameRate:
+                                        desktopSharingFrameRate?.max ??
+                                        SS_DEFAULT_FRAME_RATE,
+                                    minWidth:
+                                        desktopSharingResolution?.width?.min,
+                                    minHeight:
+                                        desktopSharingResolution?.height?.min,
+                                    maxWidth:
+                                        desktopSharingResolution?.width?.max ??
+                                        window.screen.width,
+                                    maxHeight:
+                                        desktopSharingResolution?.height?.max ??
+                                        window.screen.height,
+                                },
+                            },
                         };
 
                         // We have to use the old API on Electron to get a desktop stream.
@@ -278,7 +295,7 @@ const ScreenObtainer = {
                 displaySurface: "monitor",
             },
             audio,
-            cursor: "always",
+            cursor: "motion", //"always",
         };
 
         logger.info("Using getDisplayMedia for screen sharing", constraints);

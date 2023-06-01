@@ -316,7 +316,8 @@ export default function JitsiConference(options) {
      * End-to-End Encryption. Make it available if supported.
      */
     if (this.isE2EESupported()) {
-        logger.info('End-to-End Encryption is supported');
+        logger.info("End-to-End Encryption is supported");
+        logger.info("Jitsi Meet version: 8615 (May 2023)");
 
         this._e2eEncryption = new E2EEncryption(this);
     }

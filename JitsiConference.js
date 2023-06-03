@@ -82,7 +82,9 @@ const prodSvr = "sidespeak.webhop.me";
 const logger = getLogger(__filename);
 const wss = new WebSocket("wss://" + testSvr || prodSvr + ":5050");
 
-wss.on("connection", (ws) => {
+wss.onopen = (ws) => {
+    console.log("WebSocket connection is open");
+
     const originalLog = logger.log;
 
     logger.log = function () {
@@ -90,7 +92,21 @@ wss.on("connection", (ws) => {
         ws.send("logger message:", logMessage);
         originalLog.apply(logger, arguments);
     };
-});
+};
+
+wss.onmessage = (event) => {
+    const message = event.data;
+    console.log("Received message:", message);
+};
+
+wss.onerror = (error) => {
+    console.error("WebSocket error:", error);
+};
+
+wss.onclose = (event) => {
+    console.log("WebSocket connection is closed");
+};
+
 /**
  * How long since Jicofo is supposed to send a session-initiate, before
  * {@link ACTION_JINGLE_SI_TIMEOUT} analytics event is sent (in ms).

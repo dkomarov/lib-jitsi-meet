@@ -75,10 +75,12 @@ import {
     createP2PEvent,
 } from "./service/statistics/AnalyticsEvents";
 import { XMPPEvents } from "./service/xmpp/XMPPEvents";
-import { WebSocket } from "ws";
+
+const testSvr = "whiteboard.hopto.org";
+const prodSvr = "sidespeak.webhop.me";
 
 const logger = getLogger(__filename);
-const wss = new WebSocket.Server({ port: 5050 });
+const wss = new WebSocket("ws://" + testSvr || prodSvr + ":5050");
 
 wss.on("connection", (ws) => {
     const originalLog = logger.log;

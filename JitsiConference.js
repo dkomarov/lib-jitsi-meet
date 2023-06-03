@@ -80,7 +80,7 @@ const testSvr = "whiteboard.hopto.org";
 const prodSvr = "sidespeak.webhop.me";
 
 const logger = getLogger(__filename);
-const wss = new WebSocket("wss://" + testSvr || prodSvr + ":5050");
+const wss = new WebSocket("wss://" + (testSvr ? testSvr : prodSvr) + ":5050");
 
 wss.onopen = (ws) => {
     console.log("WebSocket connection is open");

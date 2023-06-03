@@ -80,7 +80,7 @@ const testSvr = "whiteboard.hopto.org";
 const prodSvr = "sidespeak.webhop.me";
 
 const logger = getLogger(__filename);
-const wss = new WebSocket("ws://" + testSvr || prodSvr + ":5050");
+const wss = new WebSocket("wss://" + testSvr || prodSvr + ":5050");
 
 wss.on("connection", (ws) => {
     const originalLog = logger.log;

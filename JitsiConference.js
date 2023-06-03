@@ -75,7 +75,7 @@ import {
     createP2PEvent,
 } from "./service/statistics/AnalyticsEvents";
 import { XMPPEvents } from "./service/xmpp/XMPPEvents";
-import WebSocket from "ws";
+import { WebSocket } from "ws";
 
 const logger = getLogger(__filename);
 const wss = new WebSocket.Server({ port: 5050 });

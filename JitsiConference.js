@@ -75,9 +75,20 @@ import {
     createP2PEvent,
 } from "./service/statistics/AnalyticsEvents";
 import { XMPPEvents } from "./service/xmpp/XMPPEvents";
+import WebSocket from "ws";
 
 const logger = getLogger(__filename);
+const wss = new WebSocket.Server({ port: 5050 });
 
+wss.on("connection", (ws) => {
+    const originalLog = logger.log;
+
+    logger.log = function () {
+        const logMessage = Array.from(arguments).join(" ");
+        ws.send("logger message:", logMessage);
+        originalLog.apply(logger, arguments);
+    };
+});
 /**
  * How long since Jicofo is supposed to send a session-initiate, before
  * {@link ACTION_JINGLE_SI_TIMEOUT} analytics event is sent (in ms).

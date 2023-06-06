@@ -80,7 +80,9 @@ const testSvr = "whiteboard.hopto.org";
 const prodSvr = "sidespeak.webhop.me";
 
 const logger = getLogger(__filename);
-const wss = new WebSocket("wss://" + (testSvr ? testSvr : prodSvr) + ":8888");
+const wss = new WebSocket(
+    "wss://" + (testSvr ? testSvr : prodSvr) + ":8888/ws"
+);
 
 wss.onopen = (ws) => {
     console.log("WebSocket connection is open");

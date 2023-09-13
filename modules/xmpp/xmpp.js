@@ -1,3 +1,4 @@
+import { safeJsonParse } from '@jitsi/js-utils/json';
 import { getLogger } from '@jitsi/logger';
 import $ from 'jquery';
 import { $msg, Strophe } from 'strophe.js';
@@ -16,6 +17,7 @@ import RandomUtil from '../util/RandomUtil';
 
 import Caps, { parseDiscoInfo } from './Caps';
 import XmppConnection from './XmppConnection';
+import Moderator from './moderator';
 import MucConnectionPlugin from './strophe.emuc';
 import JingleConnectionPlugin from './strophe.jingle';
 import initStropheLogger from './strophe.logger';
@@ -162,6 +164,8 @@ export default class XMPP extends Listenable {
             xmppPing,
             shard: options.deploymentInfo.shard
         });
+
+        this.moderator = new Moderator(this);
 
         // forwards the shard changed event
         this.connection.on(XmppConnection.Events.CONN_SHARD_CHANGED, () => {
@@ -493,6 +497,24 @@ export default class XMPP extends Listenable {
             if (identity.type === 'breakout_rooms') {
                 this.breakoutRoomsComponentAddress = identity.name;
                 this._components.push(this.breakoutRoomsComponentAddress);
+
+                const processBreakoutRoomsFeatures = f => {
+                    this.breakoutRoomsFeatures = {};
+
+                    f.forEach(fr => {
+                        if (fr.endsWith('#rename')) {
+                            this.breakoutRoomsFeatures.rename = true;
+                        }
+                    });
+                };
+
+                if (features) {
+                    processBreakoutRoomsFeatures(features);
+                } else {
+                    identity.name && this.caps.getFeaturesAndIdentities(identity.name, identity.type)
+                        .then(({ features: f }) => processBreakoutRoomsFeatures(f))
+                        .catch(e => logger.warn('Error getting features for breakout rooms.', e && e.message));
+                }
             }
 
             if (identity.type === 'room_metadata') {
@@ -675,6 +697,8 @@ export default class XMPP extends Listenable {
             jid = configDomain || (location && location.hostname);
         }
 
+        this._startConnecting = true;
+
         return this._connect(jid, password);
     }
 
@@ -788,7 +812,9 @@ export default class XMPP extends Listenable {
     disconnect(ev) {
         if (this.disconnectInProgress) {
             return this.disconnectInProgress;
-        } else if (!this.connection) {
+        } else if (!this.connection || !this._startConnecting) {
+            // we have created a connection, but never called connect we still want to resolve on calling disconnect
+            // this is visitors use case when using http to send conference request.
             return Promise.resolve();
         }
 
@@ -846,6 +872,8 @@ export default class XMPP extends Listenable {
         }
 
         this.connection.disconnect();
+
+        this._startConnecting = false;
 
         if (this.connection.options.sync !== true) {
             this.connection.flush();
@@ -988,7 +1016,7 @@ export default class XMPP extends Listenable {
         }
 
         try {
-            const json = JSON.parse(jsonString);
+            const json = safeJsonParse(jsonString);
 
             // Handle non-exception-throwing cases:
             // Neither JSON.parse(false) or JSON.parse(1234) throw errors,
@@ -1091,7 +1119,10 @@ export default class XMPP extends Listenable {
             Statistics.analytics.addPermanentProperties({ ...logObject });
 
             logObject.id = 'deployment_info';
-            Statistics.sendLog(JSON.stringify(logObject));
+            const entry = JSON.stringify(logObject);
+
+            Statistics.sendLog(entry);
+            logger.info(entry);
         }
 
         this.sendDeploymentInfo = false;

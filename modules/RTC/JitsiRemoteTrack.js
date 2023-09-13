@@ -1,4 +1,5 @@
 import * as JitsiTrackEvents from '../../JitsiTrackEvents';
+import { VideoType } from '../../service/RTC/VideoType';
 import { createTtfmEvent } from '../../service/statistics/AnalyticsEvents';
 import TrackStreamingStatusImpl, { TrackStreamingStatus } from '../connectivity/TrackStreamingStatus';
 import Statistics from '../statistics/statistics';
@@ -16,7 +17,7 @@ let ttfmTrackerVideoAttached = false;
  * List of container events that we are going to process. _onContainerEventHandler will be added as listener to the
  * container for every event in the list.
  */
-const containerEvents = [ 'abort', 'canplaythrough', 'ended', 'error' ];
+const containerEvents = [ 'abort', 'canplaythrough', 'ended', 'error', 'stalled', 'suspend', 'waiting' ];
 
 /* eslint-disable max-params */
 
@@ -166,6 +167,15 @@ export default class JitsiRemoteTrack extends JitsiTrack {
     _onTrackMute() {
         logger.debug(`"onmute" event(${Date.now()}): ${this}`);
 
+        // Ignore mute events that get fired on desktop tracks because of 0Hz screensharing introduced in Chromium.
+        // The sender stops sending frames if the content of the captured window doesn't change resulting in the
+        // receiver showing avatar instead of the shared content.
+        if (this.videoType === VideoType.DESKTOP) {
+            logger.debug('Ignoring mute event on desktop tracks.');
+
+            return;
+        }
+
         this.rtc.eventEmitter.emit(RTCEvents.REMOTE_TRACK_MUTE, this);
     }
 
@@ -305,7 +315,7 @@ export default class JitsiRemoteTrack extends JitsiTrack {
 
         const now = window.performance.now();
 
-        console.log(`(TIME) Render ${type}:\t`, now);
+        logger.info(`(TIME) Render ${type}:\t`, now);
         this.conference.getConnectionTimes()[`${type}.render`] = now;
 
         // The conference can be started without calling GUM
@@ -324,7 +334,7 @@ export default class JitsiRemoteTrack extends JitsiTrack {
             - gumDuration;
 
         this.conference.getConnectionTimes()[`${type}.ttfm`] = ttfm;
-        console.log(`(TIME) TTFM ${type}:\t`, ttfm);
+        logger.info(`(TIME) TTFM ${type}:\t`, ttfm);
 
         Statistics.sendAnalytics(createTtfmEvent(
             {

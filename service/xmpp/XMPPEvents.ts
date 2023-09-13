@@ -69,6 +69,11 @@ export enum XMPPEvents {
     DISPLAY_NAME_CHANGED = 'xmpp.display_name_changed',
 
     /**
+     * Event for incoming presence error which is for required display name.
+     */
+    DISPLAY_NAME_REQUIRED = 'xmpp.display_name_required',
+
+    /**
      * Chat room instance have been added to Strophe.emuc plugin.
      */
     EMUC_ROOM_ADDED = 'xmpp.emuc_room_added',
@@ -203,11 +208,6 @@ export enum XMPPEvents {
      * Indicates that recording state changed.
      */
     RECORDER_STATE_CHANGED = 'xmpp.recorderStateChanged',
-
-    /**
-     * The conference was redirected to a visitor node.
-     */
-    REDIRECTED = 'xmpp.redirected',
 
     // Designates an event indicating that we received statistics from a
     // participant in the MUC.

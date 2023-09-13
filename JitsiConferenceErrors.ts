@@ -58,6 +58,13 @@ export enum JitsiConferenceErrors {
     CONFERENCE_ACCESS_DENIED = 'conference.connectionError.accessDenied',
 
     /**
+     * Indicates that the display name is required when joining the room.
+     * There are cases like lobby room where display name is required.
+     * @param {boolean|null} lobby whether the error is because lobby is enabled.
+     */
+    DISPLAY_NAME_REQUIRED = 'conference.display_name_required',
+
+    /**
      * Indicates that focus error happened.
      */
     FOCUS_DISCONNECTED = 'conference.focusDisconnected',
@@ -99,11 +106,6 @@ export enum JitsiConferenceErrors {
     PASSWORD_REQUIRED = 'conference.passwordRequired',
 
     /**
-     * The conference is redirected to a visitor node.
-     */
-    REDIRECTED = 'conference.redirected',
-
-    /**
      * Indicates that reservation system returned error.
      */
     RESERVATION_ERROR = 'conference.reservationError',
@@ -112,7 +114,7 @@ export enum JitsiConferenceErrors {
      * Indicates that there is no available videobridge.
      */
     VIDEOBRIDGE_NOT_AVAILABLE = 'conference.videobridgeNotAvailable'
-};
+}
 
 // exported for backward compatibility
 export const AUTHENTICATION_REQUIRED = JitsiConferenceErrors.AUTHENTICATION_REQUIRED;
@@ -125,6 +127,7 @@ export const CONFERENCE_RESTARTED = JitsiConferenceErrors.CONFERENCE_RESTARTED;
 export const NOT_ALLOWED_ERROR = JitsiConferenceErrors.NOT_ALLOWED_ERROR;
 export const MEMBERS_ONLY_ERROR = JitsiConferenceErrors.MEMBERS_ONLY_ERROR;
 export const CONFERENCE_ACCESS_DENIED = JitsiConferenceErrors.CONFERENCE_ACCESS_DENIED;
+export const DISPLAY_NAME_REQUIRED = JitsiConferenceErrors.DISPLAY_NAME_REQUIRED;
 export const FOCUS_DISCONNECTED = JitsiConferenceErrors.FOCUS_DISCONNECTED;
 export const FOCUS_LEFT = JitsiConferenceErrors.FOCUS_LEFT;
 export const GRACEFUL_SHUTDOWN = JitsiConferenceErrors.GRACEFUL_SHUTDOWN;
@@ -133,6 +136,5 @@ export const INCOMPATIBLE_SERVER_VERSIONS = JitsiConferenceErrors.INCOMPATIBLE_S
 export const OFFER_ANSWER_FAILED = JitsiConferenceErrors.OFFER_ANSWER_FAILED;
 export const PASSWORD_NOT_SUPPORTED = JitsiConferenceErrors.PASSWORD_NOT_SUPPORTED;
 export const PASSWORD_REQUIRED = JitsiConferenceErrors.PASSWORD_REQUIRED;
-export const REDIRECTED = JitsiConferenceErrors.REDIRECTED;
 export const RESERVATION_ERROR = JitsiConferenceErrors.RESERVATION_ERROR;
 export const VIDEOBRIDGE_NOT_AVAILABLE = JitsiConferenceErrors.VIDEOBRIDGE_NOT_AVAILABLE;

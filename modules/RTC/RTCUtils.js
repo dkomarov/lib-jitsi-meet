@@ -864,7 +864,7 @@ const rtcUtils = new RTCUtils();
 function wrapAttachMediaStream(origAttachMediaStream) {
     return function(element, stream) {
         // eslint-disable-next-line prefer-rest-params
-        origAttachMediaStream.apply(rtcUtils, arguments);
+        const res = origAttachMediaStream.apply(rtcUtils, arguments);
 
         if (stream
                 && rtcUtils.isDeviceChangeAvailable('output')
@@ -873,27 +873,26 @@ function wrapAttachMediaStream(origAttachMediaStream) {
 
                 // we skip setting audio output if there was no explicit change
                 && audioOutputChanged) {
-            return element.setSinkId(rtcUtils.getAudioOutputDevice()).catch(function(ex) {
-                const err
-                    = new JitsiTrackError(ex, null, [ 'audiooutput' ]);
+            element.setSinkId(rtcUtils.getAudioOutputDevice())
+                .catch(function(ex) {
+                    const err
+                        = new JitsiTrackError(ex, null, [ 'audiooutput' ]);
 
-                GlobalOnErrorHandler.callUnhandledRejectionHandler({
-                    promise: this, // eslint-disable-line no-invalid-this
-                    reason: err
+                    GlobalOnErrorHandler.callUnhandledRejectionHandler({
+                        promise: this, // eslint-disable-line no-invalid-this
+                        reason: err
+                    });
+
+                    logger.warn(
+                        'Failed to set audio output device for the element.'
+                            + ' Default audio output device will be used'
+                            + ' instead',
+                        element,
+                        err);
                 });
-
-                logger.warn(
-                    'Failed to set audio output device for the element.'
-                        + ' Default audio output device will be used'
-                        + ' instead',
-                    element?.id,
-                    err);
-
-                throw err;
-            });
         }
 
-        return Promise.resolve();
+        return res;
     };
 }
 

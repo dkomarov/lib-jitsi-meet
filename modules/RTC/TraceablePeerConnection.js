@@ -2,7 +2,7 @@ import { getLogger } from '@jitsi/logger';
 import { Interop } from '@jitsi/sdp-interop';
 import transform from 'sdp-transform';
 
-import CodecMimeType from '../../service/RTC/CodecMimeType';
+import * as CodecMimeType from '../../service/RTC/CodecMimeType';
 import { MediaDirection } from '../../service/RTC/MediaDirection';
 import { MediaType } from '../../service/RTC/MediaType';
 import RTCEvents from '../../service/RTC/RTCEvents';
@@ -48,17 +48,13 @@ const DEGRADATION_PREFERENCE_DESKTOP = 'maintain-resolution';
  * @param {object} constraints WebRTC 'PeerConnection' constraints
  * @param {boolean} isP2P indicates whether or not the new instance will be used in a peer to peer connection.
  * @param {object} options <tt>TracablePeerConnection</tt> config options.
- * @param {Object} options.audioQuality - Quality settings to applied on the outbound audio stream.
- * @param {boolean} options.capScreenshareBitrate if set to true, lower layers will be disabled for screenshare.
- * @param {Array<CodecMimeType>} options.codecSettings - codec settings to be applied for video streams.
  * @param {boolean} options.disableSimulcast if set to 'true' will disable the simulcast.
  * @param {boolean} options.disableRtx if set to 'true' will disable the RTX.
- * @param {boolean} options.enableInsertableStreams set to true when the insertable streams constraints is to be
- * enabled on the PeerConnection.
- * @param {boolean} options.forceTurnRelay If set to true, the browser will generate only Relay ICE candidates.
+ * @param {string} options.disabledCodec the mime type of the code that should not be negotiated on the peerconnection.
+ * @param {string} options.preferredCodec the mime type of the codec that needs to be made the preferred codec for the
+ * peerconnection.
  * @param {boolean} options.startSilent If set to 'true' no audio will be sent or received.
  * @param {boolean} options.usesUnifiedPlan Indicates if the  browser is running in unified plan mode.
- * @param {Object} options.videoQuality - Quality settings to applied on the outbound video streams.
  *
  * FIXME: initially the purpose of TraceablePeerConnection was to be able to
  * debug the peer connection. Since many other responsibilities have been added
@@ -186,15 +182,8 @@ export default function TraceablePeerConnection(
     /**
      * The set of remote SSRCs seen so far.
      * Distinguishes new SSRCs from those that have been remapped.
-     * @type {Set<number>}
      */
     this.remoteSSRCs = new Set();
-
-    /**
-     * Mapping of source-names and their associated SSRCs that have been signaled by the JVB.
-     * @type {Map<string, number>}
-     */
-    this.remoteSources = new Map();
 
     /**
      * The local ICE username fragment for this session.
@@ -1023,7 +1012,7 @@ TraceablePeerConnection.prototype._remoteTrackAdded = function(stream, track, tr
     // Assume default presence state for remote source. Presence can be received after source signaling. This shouldn't
     // prevent the endpoint from creating a remote track for the source.
     let muted = true;
-    let videoType = mediaType === MediaType.VIDEO ? VideoType.CAMERA : undefined; // 'camera' by default
+    let videoType = VideoType.CAMERA;
 
     if (peerMediaInfo) {
         muted = peerMediaInfo.muted;
@@ -1196,10 +1185,6 @@ TraceablePeerConnection.prototype._removeRemoteTrack = function(toBeRemoved) {
 
     toBeRemoved.dispose();
     const participantId = toBeRemoved.getParticipantId();
-
-    if (!participantId && FeatureFlags.isSsrcRewritingSupported()) {
-        return;
-    }
     const userTracksByMediaType = this.remoteTracks.get(participantId);
 
     if (!userTracksByMediaType) {
@@ -1680,10 +1665,6 @@ TraceablePeerConnection.prototype._isSharingScreen = function() {
  * @returns {RTCSessionDescription} the munged description.
  */
 TraceablePeerConnection.prototype._mungeCodecOrder = function(description) {
-    if (!this.codecSettings) {
-        return description;
-    }
-
     const parsedSdp = transform.parse(description.sdp);
     const mLines = parsedSdp.media.filter(m => m.type === this.codecSettings.mediaType);
 
@@ -1692,27 +1673,20 @@ TraceablePeerConnection.prototype._mungeCodecOrder = function(description) {
     }
 
     for (const mLine of mLines) {
-        const currentCodecs = this.getConfiguredVideoCodecs(description);
+        if (this.codecSettings.disabled) {
+            SDPUtil.stripCodec(mLine, this.codecSettings.disabled);
+        }
 
-        for (const codec of currentCodecs) {
+        if (this.codecSettings.preferred) {
+            SDPUtil.preferCodec(mLine, this.codecSettings.preferred);
+
             // Strip the high profile H264 codecs on mobile clients for p2p connection. High profile codecs give better
             // quality at the expense of higher load which we do not want on mobile clients. Jicofo offers only the
             // baseline code for the jvb connection and therefore this is not needed for jvb connection.
-            if (codec === CodecMimeType.H264 && browser.isMobileDevice() && this.isP2P) {
-                SDPUtil.stripCodec(mLine, codec, true /* high profile */);
+            // TODO - add check for mobile browsers once js-utils provides that check.
+            if (this.codecSettings.preferred === CodecMimeType.H264 && browser.isReactNative() && this.isP2P) {
+                SDPUtil.stripCodec(mLine, this.codecSettings.preferred, true /* high profile */);
             }
-
-            // There are multiple VP9 payload types generated by the browser, more payload types are added if the
-            // endpoint doesn't have a local video source. Therefore, strip all the high profile codec variants for VP9
-            // so that only one payload type for VP9 is negotiated between the peers.
-            if (this.isP2P && codec === CodecMimeType.VP9) {
-                SDPUtil.stripCodec(mLine, codec, true /* high profile */);
-            }
-        }
-
-        // Reorder the codecs based on the preferred settings.
-        for (const codec of this.codecSettings.codecList.slice().reverse()) {
-            SDPUtil.preferCodec(mLine, codec);
         }
     }
 
@@ -1919,27 +1893,6 @@ TraceablePeerConnection.prototype.getConfiguredVideoCodec = function() {
 };
 
 /**
- * Returns the codecs in the current order of preference as configured on the peerconnection.
- *
- * @param {RTCSessionDescription} - The local description to be used.
- * @returns {Array}
- */
-TraceablePeerConnection.prototype.getConfiguredVideoCodecs = function(description) {
-    const currentSdp = description?.sdp ?? this.peerconnection.localDescription?.sdp;
-
-    if (!currentSdp) {
-        return [];
-    }
-    const parsedSdp = transform.parse(currentSdp);
-    const mLine = parsedSdp.media.find(m => m.type === MediaType.VIDEO);
-    const codecs = new Set(mLine.rtp
-        .filter(pt => pt.codec.toLowerCase() !== 'rtx')
-        .map(pt => pt.codec.toLowerCase()));
-
-    return Array.from(codecs);
-};
-
-/**
  * Checks if the client has negotiated not to receive video encoded using the given codec, i.e., the codec has been
  * removed from the local description.
  */
@@ -1974,12 +1927,9 @@ TraceablePeerConnection.prototype.setDesktopSharingFrameRate = function(maxFps) 
  * @param {CodecMimeType} disabledCodec the codec that needs to be disabled.
  * @returns {void}
  */
-TraceablePeerConnection.prototype.setVideoCodecs = function(codecList) {
-    if (!this.codecSettings || !codecList?.length) {
-        return;
-    }
-
-    this.codecSettings.codecList = codecList;
+TraceablePeerConnection.prototype.setVideoCodecs = function(preferredCodec, disabledCodec) {
+    preferredCodec && (this.codecSettings.preferred = preferredCodec);
+    disabledCodec && (this.codecSettings.disabled = disabledCodec);
 };
 
 /**
@@ -2473,9 +2423,6 @@ TraceablePeerConnection.prototype._initializeDtlsTransport = function() {
  * @returns RTCSessionDescription
  */
 TraceablePeerConnection.prototype._setVp9MaxBitrates = function(description, isLocalSdp = false) {
-    if (!this.codecSettings) {
-        return description;
-    }
     const parsedSdp = transform.parse(description.sdp);
 
     // Find all the m-lines associated with the local sources.
@@ -2483,7 +2430,7 @@ TraceablePeerConnection.prototype._setVp9MaxBitrates = function(description, isL
     const mLines = parsedSdp.media.filter(m => m.type === MediaType.VIDEO && m.direction !== direction);
 
     for (const mLine of mLines) {
-        if (this.codecSettings.codecList[0] === CodecMimeType.VP9) {
+        if (this.codecSettings.preferred === CodecMimeType.VP9) {
             const bitrates = this.tpcUtils.videoBitrates.VP9 || this.tpcUtils.videoBitrates;
             const hdBitrate = bitrates.high ? bitrates.high : HD_BITRATE;
             const ssHdBitrate = bitrates.ssHigh ? bitrates.ssHigh : HD_BITRATE;
@@ -2521,10 +2468,10 @@ TraceablePeerConnection.prototype._setVp9MaxBitrates = function(description, isL
  * @returns {Promise} promise that will be resolved when the operation is successful and rejected otherwise.
  */
 TraceablePeerConnection.prototype.configureSenderVideoEncodings = function(localVideoTrack = null) {
-    // If media is suspended on the jvb peerconnection, make sure that media stays disabled. The default 'active' state
-    // for the encodings after the source is added to the peerconnection is 'true', so it needs to be explicitly
-    // disabled after the source is added.
-    if (!this.isP2P && !(this.videoTransferActive && this.audioTransferActive)) {
+    // If media is suspended on the peerconnection, make sure that media stays disabled. The default 'active' state for
+    // the encodings after the source is added to the peerconnection is 'true', so it needs to be explicitly disabled
+    // after the source is added.
+    if (!(this.videoTransferActive && this.audioTransferActive)) {
         return this.tpcUtils.setMediaTransferActive(false);
     }
 
@@ -2663,7 +2610,7 @@ TraceablePeerConnection.prototype.setSenderVideoConstraints = function(frameHeig
 
     // Ignore sender constraints if the media on the peerconnection is suspended (jvb conn when p2p is currently active)
     // or if the video track is muted.
-    if ((!this.isP2P && !this.videoTransferActive) || localVideoTrack.isMuted()) {
+    if (!this.videoTransferActive || localVideoTrack.isMuted()) {
         this._senderMaxHeights.set(sourceName, frameHeight);
 
         return Promise.resolve();
@@ -2683,8 +2630,7 @@ TraceablePeerConnection.prototype.setSenderVideoConstraints = function(frameHeig
 
     this._senderMaxHeights.set(sourceName, frameHeight);
 
-    return this._updateVideoSenderParameters(
-        () => this._updateVideoSenderEncodings(frameHeight, localVideoTrack));
+    return this._updateVideoSenderParameters(this._updateVideoSenderEncodings(frameHeight, localVideoTrack));
 };
 
 /**
@@ -2692,12 +2638,12 @@ TraceablePeerConnection.prototype.setSenderVideoConstraints = function(frameHeig
  * This is needed on Chrome as it resets the transaction id after executing setParameters() and can affect the next on
  * the fly updates if they are not chained.
  * https://chromium.googlesource.com/external/webrtc/+/master/pc/rtp_sender.cc#340
- * @param {Function} nextFunction - The function to be called when the last video sender update promise is settled.
+ * @param {Promise} promise - The promise that needs to be chained.
  * @returns {Promise}
  */
-TraceablePeerConnection.prototype._updateVideoSenderParameters = function(nextFunction) {
+TraceablePeerConnection.prototype._updateVideoSenderParameters = function(promise) {
     const nextPromise = this._lastVideoSenderUpdatePromise
-        .finally(nextFunction);
+        .finally(() => promise);
 
     this._lastVideoSenderUpdatePromise = nextPromise;
 
@@ -2797,11 +2743,16 @@ TraceablePeerConnection.prototype._updateVideoSenderEncodings = function(frameHe
 };
 
 /**
- * Enables/disables outgoing video media transmission on this peer connection. When disabled the stream encoding's
- * active state is enabled or disabled to send or stop the media.
- * @param {boolean} active <tt>true</tt> to enable video media transmission or <tt>false</tt> to disable. If the value
- * is not a boolean the call will have no effect.
- * @return {Promise} A promise that is resolved when the change is succesful, rejected otherwise.
+ * Enables/disables video media transmission on this peer connection. When
+ * disabled the SDP video media direction in the local SDP will be adjusted to
+ * 'inactive' which means that no data will be sent nor accepted, but
+ * the connection should be kept alive.
+ * @param {boolean} active <tt>true</tt> to enable video media transmission or
+ * <tt>false</tt> to disable. If the value is not a boolean the call will have
+ * no effect.
+ * @return {boolean} <tt>true</tt> if the value has changed and sRD/sLD cycle
+ * needs to be executed in order for the changes to take effect or
+ * <tt>false</tt> if the given value was the same as the previous one.
  * @public
  */
 TraceablePeerConnection.prototype.setVideoTransferActive = function(active) {
@@ -2810,11 +2761,14 @@ TraceablePeerConnection.prototype.setVideoTransferActive = function(active) {
 
     this.videoTransferActive = active;
 
-    if (changed) {
-        return this.tpcUtils.setMediaTransferActive(active, MediaType.VIDEO);
+    if (this._usesUnifiedPlan) {
+        this.tpcUtils.setVideoTransferActive(active);
+
+        // false means no renegotiation up the chain which is not needed in the Unified mode
+        return false;
     }
 
-    return Promise.resolve();
+    return changed;
 };
 
 /**
@@ -3036,19 +2990,26 @@ TraceablePeerConnection.prototype._createOfferOrAnswer = function(
 
     // Set the codec preference before creating an offer or answer so that the generated SDP will have
     // the correct preference order.
-    if (this._usesTransceiverCodecPreferences && this.codecSettings) {
-        const { codecList, mediaType } = this.codecSettings;
+    if (this._usesTransceiverCodecPreferences) {
+        const { mediaType } = this.codecSettings;
         const transceivers = this.peerconnection.getTransceivers()
             .filter(t => t.receiver && t.receiver?.track?.kind === mediaType);
-        let capabilities = RTCRtpReceiver.getCapabilities(mediaType)?.codecs;
 
-        if (transceivers.length && capabilities) {
-            // Rearrange the codec list as per the preference order.
-            for (const codec of codecList.slice().reverse()) {
-                // Move the desired codecs (all variations of it as well) to the beginning of the list
+        if (transceivers.length) {
+            let capabilities = RTCRtpReceiver.getCapabilities(mediaType)?.codecs;
+            const disabledCodecMimeType = this.codecSettings?.disabled;
+            const preferredCodecMimeType = this.codecSettings?.preferred;
+
+            if (capabilities && disabledCodecMimeType) {
+                capabilities = capabilities
+                    .filter(caps => caps.mimeType.toLowerCase() !== `${mediaType}/${disabledCodecMimeType}`);
+            }
+
+            if (capabilities && preferredCodecMimeType) {
+                // Move the desired codec (all variations of it as well) to the beginning of the list.
                 /* eslint-disable-next-line arrow-body-style */
                 capabilities.sort(caps => {
-                    return caps.mimeType.toLowerCase() === `${mediaType}/${codec}` ? -1 : 1;
+                    return caps.mimeType.toLowerCase() === `${mediaType}/${preferredCodecMimeType}` ? -1 : 1;
                 });
             }
 

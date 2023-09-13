@@ -11,7 +11,7 @@ export default class Moderator {
   createConferenceIq: () => Strophe.Builder; // TODO:
   parseSessionId: ( resultIq: unknown ) => void; // TODO:
   parseConfigOptions: ( resultIq: unknown ) => void; // TODO:
-  sendConferenceRequest: () => Promise<unknown>;
+  allocateConferenceFocus: () => Promise<unknown>; // TODO: jsdoc suggests an argument
   authenticate: () => Promise<unknown>; // TODO:
   getLoginUrl: () => unknown; // TODO:
   getPopupLoginUrl: ( urlCallback: unknown, failureCallback: ( params: unknown ) => unknown ) => unknown; // TODO:

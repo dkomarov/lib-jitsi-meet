@@ -5,10 +5,8 @@ import JitsiTrackError from '../../JitsiTrackError';
 import { JitsiTrackEvents } from '../../JitsiTrackEvents';
 import { FEEDBACK } from '../../service/statistics/AnalyticsEvents';
 import * as StatisticsEvents from '../../service/statistics/Events';
-import RTCStats from '../RTCStats/RTCStats';
 import browser from '../browser';
 import ScriptUtil from '../util/ScriptUtil';
-import WatchRTC from '../watchRTC/WatchRTC';
 
 import analytics from './AnalyticsAdapter';
 import CallStats from './CallStats';
@@ -129,13 +127,6 @@ Statistics.init = function(options) {
     }
 
     Statistics.disableThirdPartyRequests = options.disableThirdPartyRequests;
-
-    // WatchRTC is not required to work for react native
-    if (!browser.isReactNative()) {
-        WatchRTC.init(options);
-    }
-
-    RTCStats.init(options);
 };
 
 /**
@@ -156,11 +147,11 @@ Statistics.init = function(options) {
  */
 /**
  *
- * @param {JitsiConference} conference - The conference instance from which the statistics were initialized.
+ * @param xmpp
  * @param {StatisticsOptions} options - The options to use creating the
  * Statistics.
  */
-export default function Statistics(conference, options) {
+export default function Statistics(xmpp, options) {
     /**
      * {@link RTPStats} mapped by {@link TraceablePeerConnection.id} which
      * collect RTP statistics for each peerconnection.
@@ -168,8 +159,7 @@ export default function Statistics(conference, options) {
      */
     this.rtpStatsMap = new Map();
     this.eventEmitter = new EventEmitter();
-    this.conference = conference;
-    this.xmpp = conference?.xmpp;
+    this.xmpp = xmpp;
     this.options = options || {};
 
     this.callStatsIntegrationEnabled
@@ -202,14 +192,6 @@ export default function Statistics(conference, options) {
     this.callsStatsInstances = new Map();
 
     Statistics.instances.add(this);
-
-    RTCStats.start(this.conference);
-
-    // WatchRTC is not required to work for react native
-    if (!browser.isReactNative()) {
-        WatchRTC.start(this.options.roomName, this.options.userName);
-    }
-
 }
 Statistics.audioLevelsEnabled = false;
 Statistics.audioLevelsInterval = 200;
@@ -362,7 +344,7 @@ Statistics.prototype.addLongTasksStatsListener = function(listener) {
  *
  * @returns {void}
  */
-Statistics.prototype.attachLongTasksStats = function() {
+Statistics.prototype.attachLongTasksStats = function(conference) {
     if (!browser.supportsPerformanceObserver()) {
         logger.warn('Performance observer for long tasks not supported by browser!');
 
@@ -373,10 +355,10 @@ Statistics.prototype.attachLongTasksStats = function() {
         this.eventEmitter,
         Statistics.longTasksStatsInterval);
 
-    this.conference.on(
+    conference.on(
         JitsiConferenceEvents.CONFERENCE_JOINED,
         () => this.performanceObserverStats.startObserver());
-    this.conference.on(
+    conference.on(
         JitsiConferenceEvents.CONFERENCE_LEFT,
         () => this.performanceObserverStats.stopObserver());
 };

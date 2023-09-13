@@ -1,4 +1,3 @@
-import { safeJsonParse } from '@jitsi/js-utils/json';
 import { getLogger } from '@jitsi/logger';
 import { Strophe } from 'strophe.js';
 
@@ -137,7 +136,7 @@ export default class SignalingLayerImpl extends SignalingLayer {
         this._sourceInfoHandler = (node, mucNick) => {
             const endpointId = mucNick;
             const { value } = node;
-            const sourceInfoJSON = safeJsonParse(value);
+            const sourceInfoJSON = JSON.parse(value);
             const emitEventsFromHere = this._doesEndpointSendNewSourceInfo(endpointId);
             const endpointSourceState
                 = this._remoteSourceState[endpointId] || (this._remoteSourceState[endpointId] = {});
@@ -269,12 +268,9 @@ export default class SignalingLayerImpl extends SignalingLayer {
 
         if (mediaType === MediaType.VIDEO) {
             mediaInfo.videoType = undefined;
-            const codecListNode = filterNodeFromPresenceJSON(lastPresence, 'jitsi_participant_codecList');
             const codecTypeNode = filterNodeFromPresenceJSON(lastPresence, 'jitsi_participant_codecType');
 
-            if (codecListNode.length) {
-                mediaInfo.codecList = codecListNode[0].value?.split(',') ?? [];
-            } else if (codecTypeNode.length > 0) {
+            if (codecTypeNode.length > 0) {
                 mediaInfo.codecType = codecTypeNode[0].value;
             }
         }
@@ -286,10 +282,9 @@ export default class SignalingLayerImpl extends SignalingLayer {
      * @inheritDoc
      */
     getPeerSourceInfo(owner, sourceName) {
-        const mediaType = getMediaTypeFromSourceName(sourceName);
         const mediaInfo = {
             muted: true, // muted by default
-            videoType: mediaType === MediaType.VIDEO ? VideoType.CAMERA : undefined // 'camera' by default
+            videoType: VideoType.CAMERA // 'camera' by default
         };
 
         return this._remoteSourceState[owner]
@@ -377,7 +372,6 @@ export default class SignalingLayerImpl extends SignalingLayer {
         }
 
         this._localSourceState[sourceName].muted = muted;
-        logger.debug(`Mute state of ${sourceName} changed to muted=${muted}`);
 
         if (this.chatRoom) {
             return this._addLocalSourceInfoToPresence();

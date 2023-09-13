@@ -74,13 +74,7 @@ export default class IceFailedHandling {
                         logger.info('session-terminate for ice restart - done');
                     },
                     error => {
-                        logger.error(`session-terminate for ice restart failed: reason=${error.reason},`
-                        + `message=${error.msg}`);
-
-                        // Initiate a client reload if Jicofo responds to the session-terminate with an error.
-                        this._conference.eventEmitter.emit(
-                            JitsiConferenceEvents.CONFERENCE_FAILED,
-                            JitsiConferenceErrors.ICE_FAILED);
+                        logger.error(`session-terminate for ice restart - error: ${error.message}`);
                     }, {
                         reason: 'connectivity-error',
                         reasonDescription: 'ICE FAILED',

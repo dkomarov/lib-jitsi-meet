@@ -46,11 +46,9 @@ class ReceiverVideoConstraints {
     get constraints() {
         this._receiverVideoConstraints.assumedBandwidthBps = this._assumedBandwidthBps;
         this._receiverVideoConstraints.lastN = this._lastN;
-        const individualConstraints = this._receiverVideoConstraints.constraints;
-
-        if (individualConstraints && Object.keys(individualConstraints).length) {
+        if (Object.keys(this._receiverVideoConstraints.constraints)?.length) {
             /* eslint-disable no-unused-vars */
-            for (const [ key, value ] of Object.entries(individualConstraints)) {
+            for (const [ key, value ] of Object.entries(this._receiverVideoConstraints.constraints)) {
                 value.maxHeight = this._maxFrameHeight;
             }
         } else {
@@ -124,10 +122,6 @@ class ReceiverVideoConstraints {
 
         if (changed) {
             this._receiverVideoConstraints = videoConstraints;
-
-            if (videoConstraints.defaultConstraints?.maxHeight) {
-                this.updateReceiveResolution(videoConstraints.defaultConstraints.maxHeight);
-            }
             logger.debug(`Updating ReceiverVideoConstraints ${JSON.stringify(videoConstraints)}`);
         }
 
@@ -299,7 +293,7 @@ export default class ReceiveVideoController {
 
             const p2pSession = this._conference.getMediaSessions().find(session => session.isP2P);
 
-            if (!p2pSession || !constraints.constraints) {
+            if (!p2pSession) {
                 return;
             }
 

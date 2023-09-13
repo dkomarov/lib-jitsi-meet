@@ -199,10 +199,6 @@ JitsiConferenceEventManager.prototype.setupChatRoomListeners = function() {
         JitsiConferenceEvents.CONFERENCE_FAILED,
         JitsiConferenceErrors.CONNECTION_ERROR);
 
-    this.chatRoomForwarder.forward(XMPPEvents.DISPLAY_NAME_REQUIRED,
-        JitsiConferenceEvents.CONFERENCE_FAILED,
-        JitsiConferenceErrors.DISPLAY_NAME_REQUIRED);
-
     this.chatRoomForwarder.forward(XMPPEvents.ROOM_CONNECT_ERROR,
         JitsiConferenceEvents.CONFERENCE_FAILED,
         JitsiConferenceErrors.CONNECTION_ERROR);
@@ -216,6 +212,7 @@ JitsiConferenceEventManager.prototype.setupChatRoomListeners = function() {
     this.chatRoomForwarder.forward(XMPPEvents.ROOM_MAX_USERS_ERROR,
         JitsiConferenceEvents.CONFERENCE_FAILED,
         JitsiConferenceErrors.CONFERENCE_MAX_USERS);
+    chatRoom.addListener(XMPPEvents.ROOM_MAX_USERS_ERROR, () => conference.leave());
 
     this.chatRoomForwarder.forward(XMPPEvents.PASSWORD_REQUIRED,
         JitsiConferenceEvents.CONFERENCE_FAILED,
@@ -224,6 +221,11 @@ JitsiConferenceEventManager.prototype.setupChatRoomListeners = function() {
     this.chatRoomForwarder.forward(XMPPEvents.AUTHENTICATION_REQUIRED,
         JitsiConferenceEvents.CONFERENCE_FAILED,
         JitsiConferenceErrors.AUTHENTICATION_REQUIRED);
+
+    this.chatRoomForwarder.forward(XMPPEvents.REDIRECTED,
+        JitsiConferenceEvents.CONFERENCE_FAILED,
+        JitsiConferenceErrors.REDIRECTED);
+    chatRoom.addListener(XMPPEvents.REDIRECTED, () => conference.leave());
 
     this.chatRoomForwarder.forward(XMPPEvents.BRIDGE_DOWN,
         JitsiConferenceEvents.CONFERENCE_FAILED,
@@ -240,6 +242,7 @@ JitsiConferenceEventManager.prototype.setupChatRoomListeners = function() {
     this.chatRoomForwarder.forward(XMPPEvents.RESERVATION_ERROR,
         JitsiConferenceEvents.CONFERENCE_FAILED,
         JitsiConferenceErrors.RESERVATION_ERROR);
+    chatRoom.addListener(XMPPEvents.RESERVATION_ERROR, () => conference.leave());
 
     this.chatRoomForwarder.forward(XMPPEvents.GRACEFUL_SHUTDOWN,
         JitsiConferenceEvents.CONFERENCE_FAILED,
@@ -253,6 +256,7 @@ JitsiConferenceEventManager.prototype.setupChatRoomListeners = function() {
     this.chatRoomForwarder.forward(XMPPEvents.MUC_DESTROYED,
         JitsiConferenceEvents.CONFERENCE_FAILED,
         JitsiConferenceErrors.CONFERENCE_DESTROYED);
+    chatRoom.addListener(XMPPEvents.MUC_DESTROYED, () => conference.leave());
 
     this.chatRoomForwarder.forward(XMPPEvents.CHAT_ERROR_RECEIVED,
         JitsiConferenceEvents.CONFERENCE_ERROR,
@@ -442,16 +446,22 @@ JitsiConferenceEventManager.prototype.setupChatRoomListeners = function() {
         });
 
     chatRoom.addPresenceListener('startmuted', (data, from) => {
-        // Ignore the strartmuted policy if the presence is received from self. The moderator should join with
-        // available local sources and the policy needs to be applied only on users that join the call after.
-        if (conference.myUserId() === from) {
-            return;
-        }
-        const participant = conference.getParticipantById(from);
+        let isModerator = false;
 
-        if (!participant || !participant.isModerator()) {
+        if (conference.myUserId() === from && conference.isModerator()) {
+            isModerator = true;
+        } else {
+            const participant = conference.getParticipantById(from);
+
+            if (participant && participant.isModerator()) {
+                isModerator = true;
+            }
+        }
+
+        if (!isModerator) {
             return;
         }
+
         const startAudioMuted = data.attributes.audio === 'true';
         const startVideoMuted = data.attributes.video === 'true';
 

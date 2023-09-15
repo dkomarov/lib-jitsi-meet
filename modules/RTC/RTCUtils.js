@@ -1,16 +1,16 @@
 import { getLogger } from '@jitsi/logger';
 import EventEmitter from 'events';
 import clonedeep from 'lodash.clonedeep';
+import 'webrtc-adapter';
 
 import JitsiTrackError from '../../JitsiTrackError';
 import * as JitsiTrackErrors from '../../JitsiTrackErrors';
 import CameraFacingMode from '../../service/RTC/CameraFacingMode';
 import RTCEvents from '../../service/RTC/RTCEvents';
 import Resolutions from '../../service/RTC/Resolutions';
-import VideoType from '../../service/RTC/VideoType';
+import { VideoType } from '../../service/RTC/VideoType';
 import { AVAILABLE_DEVICE } from '../../service/statistics/AnalyticsEvents';
 import browser from '../browser';
-import SDPUtil from '../sdp/SDPUtil';
 import Statistics from '../statistics/statistics';
 import GlobalOnErrorHandler from '../util/GlobalOnErrorHandler';
 import Listenable from '../util/Listenable';
@@ -18,13 +18,6 @@ import Listenable from '../util/Listenable';
 import screenObtainer from './ScreenObtainer';
 
 const logger = getLogger(__filename);
-
-// Require adapter only for certain browsers. This is being done for
-// react-native, which has its own shims, and while browsers are being migrated
-// over to use adapter's shims.
-if (browser.usesAdapter()) {
-    require('webrtc-adapter');
-}
 
 const eventEmitter = new EventEmitter();
 
@@ -335,42 +328,16 @@ class RTCUtils extends Listenable {
         window.clearInterval(availableDevicesPollTimer);
         availableDevicesPollTimer = undefined;
 
-        if (browser.isReactNative()) {
-            this.RTCPeerConnectionType = RTCPeerConnection;
-
-            this.attachMediaStream = undefined; // Unused on React Native.
-
-            this.getStreamID = function({ id }) {
-                // The react-native-webrtc implementation that we use at the
-                // time of this writing returns a number for the id of
-                // MediaStream. Let's just say that a number contains no special
-                // characters.
-                return (
-                    typeof id === 'number'
-                        ? id
-                        : SDPUtil.filterSpecialChars(id));
-            };
-            this.getTrackID = ({ id }) => id;
-        } else {
-            this.RTCPeerConnectionType = RTCPeerConnection;
-
+        if (!browser.isReactNative()) {
             this.attachMediaStream
                 = wrapAttachMediaStream((element, stream) => {
                     if (element) {
                         element.srcObject = stream;
                     }
                 });
-
-            this.getStreamID = ({ id }) => id;
-            this.getTrackID = ({ id }) => id;
         }
 
-        this.pcConstraints = browser.isChromiumBased() || browser.isReactNative()
-            ? { optional: [
-                { googScreencastMinBitrate: 100 },
-                { googCpuOveruseDetection: true }
-            ] }
-            : {};
+        this.pcConstraints = {};
 
         screenObtainer.init(options);
 
@@ -457,7 +424,7 @@ class RTCUtils extends Listenable {
                         if (typeof gumTimeout !== 'undefined') {
                             clearTimeout(gumTimeout);
                         }
-                        reject(error);
+                        reject(jitsiError);
                     }
 
                     if (jitsiError.name === JitsiTrackErrors.PERMISSION_DENIED) {
@@ -476,11 +443,12 @@ class RTCUtils extends Listenable {
      * logic compared to use screenObtainer versus normal device capture logic
      * in RTCUtils#_getUserMedia.
      *
+     * @param {Object} options - Optional parameters.
      * @returns {Promise} A promise which will be resolved with an object which
      * contains the acquired display stream. If desktop sharing is not supported
      * then a rejected promise will be returned.
      */
-    _getDesktopMedia() {
+    _getDesktopMedia(options) {
         if (!screenObtainer.isSupported()) {
             return Promise.reject(new Error('Desktop sharing is not supported!'));
         }
@@ -492,7 +460,8 @@ class RTCUtils extends Listenable {
                 },
                 error => {
                     reject(error);
-                });
+                },
+                options);
         });
     }
 
@@ -542,6 +511,8 @@ class RTCUtils extends Listenable {
      * @param {Object} options.desktopSharingFrameRate.max - Maximum fps
      * @param {String} options.desktopSharingSourceDevice - The device id or
      * label for a video input source that should be used for screensharing.
+     * @param {Array<string>} options.desktopSharingSources - The types of sources ("screen", "window", etc)
+     * from which the user can select what to share.
      * @returns {Promise} The promise, when successful, will return an array of
      * meta data for the requested device type, which includes the stream and
      * track. If an error occurs, it will be deferred to the caller for
@@ -575,7 +546,8 @@ class RTCUtils extends Listenable {
             }
 
             const {
-                desktopSharingSourceDevice
+                desktopSharingSourceDevice,
+                desktopSharingSources
             } = otherOptions;
 
             // Attempt to use a video input device as a screenshare source if
@@ -613,7 +585,7 @@ class RTCUtils extends Listenable {
                     });
             }
 
-            return this._getDesktopMedia();
+            return this._getDesktopMedia({ desktopSharingSources });
         }.bind(this);
 
         /**
@@ -760,13 +732,6 @@ class RTCUtils extends Listenable {
             return isAudioOutputDeviceChangeAvailable;
         }
 
-        // Calling getUserMedia again (for preview) kills the track returned by the first getUserMedia call because of
-        // https://bugs.webkit.org/show_bug.cgi?id=179363. Therefore, do not show microphone/camera options on mobile
-        // Safari.
-        if ((deviceType === 'audioinput' || deviceType === 'input') && browser.isIosBrowser()) {
-            return false;
-        }
-
         return true;
     }
 
@@ -886,30 +851,6 @@ class RTCUtils extends Listenable {
 
         return { deviceList };
     }
-
-    /**
-     * Configures the given PeerConnection constraints to either enable or
-     * disable (according to the value of the 'enable' parameter) the
-     * 'googSuspendBelowMinBitrate' option.
-     * @param constraints the constraints on which to operate.
-     * @param enable {boolean} whether to enable or disable the suspend video
-     * option.
-     */
-    setSuspendVideo(constraints, enable) {
-        if (!constraints.optional) {
-            constraints.optional = [];
-        }
-
-        // Get rid of all "googSuspendBelowMinBitrate" constraints (we assume
-        // that the elements of constraints.optional contain a single property).
-        constraints.optional
-            = constraints.optional.filter(
-                c => !c.hasOwnProperty('googSuspendBelowMinBitrate'));
-
-        if (enable) {
-            constraints.optional.push({ googSuspendBelowMinBitrate: 'true' });
-        }
-    }
 }
 
 const rtcUtils = new RTCUtils();
@@ -923,7 +864,7 @@ const rtcUtils = new RTCUtils();
 function wrapAttachMediaStream(origAttachMediaStream) {
     return function(element, stream) {
         // eslint-disable-next-line prefer-rest-params
-        const res = origAttachMediaStream.apply(rtcUtils, arguments);
+        origAttachMediaStream.apply(rtcUtils, arguments);
 
         if (stream
                 && rtcUtils.isDeviceChangeAvailable('output')
@@ -932,26 +873,27 @@ function wrapAttachMediaStream(origAttachMediaStream) {
 
                 // we skip setting audio output if there was no explicit change
                 && audioOutputChanged) {
-            element.setSinkId(rtcUtils.getAudioOutputDevice())
-                .catch(function(ex) {
-                    const err
-                        = new JitsiTrackError(ex, null, [ 'audiooutput' ]);
+            return element.setSinkId(rtcUtils.getAudioOutputDevice()).catch(function(ex) {
+                const err
+                    = new JitsiTrackError(ex, null, [ 'audiooutput' ]);
 
-                    GlobalOnErrorHandler.callUnhandledRejectionHandler({
-                        promise: this, // eslint-disable-line no-invalid-this
-                        reason: err
-                    });
-
-                    logger.warn(
-                        'Failed to set audio output device for the element.'
-                            + ' Default audio output device will be used'
-                            + ' instead',
-                        element,
-                        err);
+                GlobalOnErrorHandler.callUnhandledRejectionHandler({
+                    promise: this, // eslint-disable-line no-invalid-this
+                    reason: err
                 });
+
+                logger.warn(
+                    'Failed to set audio output device for the element.'
+                        + ' Default audio output device will be used'
+                        + ' instead',
+                    element?.id,
+                    err);
+
+                throw err;
+            });
         }
 
-        return res;
+        return Promise.resolve();
     };
 }
 

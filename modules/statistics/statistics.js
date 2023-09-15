@@ -2,10 +2,13 @@ import EventEmitter from 'events';
 
 import * as JitsiConferenceEvents from '../../JitsiConferenceEvents';
 import JitsiTrackError from '../../JitsiTrackError';
+import { JitsiTrackEvents } from '../../JitsiTrackEvents';
 import { FEEDBACK } from '../../service/statistics/AnalyticsEvents';
 import * as StatisticsEvents from '../../service/statistics/Events';
+import RTCStats from '../RTCStats/RTCStats';
 import browser from '../browser';
 import ScriptUtil from '../util/ScriptUtil';
+import WatchRTC from '../watchRTC/WatchRTC';
 
 import analytics from './AnalyticsAdapter';
 import CallStats from './CallStats';
@@ -70,7 +73,6 @@ function _initCallStatsBackend(options) {
         userName: options.userName,
         aliasName: options.aliasName,
         applicationName: options.applicationName,
-        getWiFiStatsMethod: options.getWiFiStatsMethod,
         confID: options.confID,
         siteID: options.siteID,
         configParams: options.configParams
@@ -127,6 +129,13 @@ Statistics.init = function(options) {
     }
 
     Statistics.disableThirdPartyRequests = options.disableThirdPartyRequests;
+
+    // WatchRTC is not required to work for react native
+    if (!browser.isReactNative()) {
+        WatchRTC.init(options);
+    }
+
+    RTCStats.init(options);
 };
 
 /**
@@ -147,11 +156,11 @@ Statistics.init = function(options) {
  */
 /**
  *
- * @param xmpp
+ * @param {JitsiConference} conference - The conference instance from which the statistics were initialized.
  * @param {StatisticsOptions} options - The options to use creating the
  * Statistics.
  */
-export default function Statistics(xmpp, options) {
+export default function Statistics(conference, options) {
     /**
      * {@link RTPStats} mapped by {@link TraceablePeerConnection.id} which
      * collect RTP statistics for each peerconnection.
@@ -159,11 +168,12 @@ export default function Statistics(xmpp, options) {
      */
     this.rtpStatsMap = new Map();
     this.eventEmitter = new EventEmitter();
-    this.xmpp = xmpp;
+    this.conference = conference;
+    this.xmpp = conference?.xmpp;
     this.options = options || {};
 
     this.callStatsIntegrationEnabled
-        = this.options.callStatsID && this.options.callStatsSecret && this.options.enableCallStats
+        = this.options.callStatsID && this.options.callStatsSecret
 
             // Even though AppID and AppSecret may be specified, the integration
             // of callstats.io may be disabled because of globally-disallowed
@@ -192,6 +202,14 @@ export default function Statistics(xmpp, options) {
     this.callsStatsInstances = new Map();
 
     Statistics.instances.add(this);
+
+    RTCStats.start(this.conference);
+
+    // WatchRTC is not required to work for react native
+    if (!browser.isReactNative()) {
+        WatchRTC.start(this.options.roomName, this.options.userName);
+    }
+
 }
 Statistics.audioLevelsEnabled = false;
 Statistics.audioLevelsInterval = 200;
@@ -238,10 +256,47 @@ Statistics.prototype.startRemoteStats = function(peerconnection) {
 
 Statistics.localStats = [];
 
-Statistics.startLocalStats = function(stream, callback) {
+Statistics.startLocalStats = function(track, callback) {
+    if (browser.isIosBrowser()) {
+        // On iOS browsers audio is lost if the audio input device is in use by another app
+        // https://bugs.webkit.org/show_bug.cgi?id=233473
+        // The culprit was using the AudioContext, so now we close the AudioContext during
+        // the track being muted, and re-instantiate it afterwards.
+        track.addEventListener(
+        JitsiTrackEvents.NO_DATA_FROM_SOURCE,
+
+        /**
+         * Closes AudioContext on no audio data, and enables it on data received again.
+         *
+         * @param {boolean} value - Whether we receive audio data or not.
+         */
+        async value => {
+            if (value) {
+                for (const localStat of Statistics.localStats) {
+                    localStat.stop();
+                }
+
+                await LocalStats.disconnectAudioContext();
+            } else {
+                LocalStats.connectAudioContext();
+                for (const localStat of Statistics.localStats) {
+                    localStat.start();
+                }
+            }
+        });
+    }
+
     if (!Statistics.audioLevelsEnabled) {
         return;
     }
+
+    track.addEventListener(
+        JitsiTrackEvents.LOCAL_TRACK_STOPPED,
+        () => {
+            Statistics.stopLocalStats(track);
+        });
+
+    const stream = track.getOriginalStream();
     const localStats = new LocalStats(stream, Statistics.audioLevelsInterval,
         callback);
 
@@ -307,7 +362,7 @@ Statistics.prototype.addLongTasksStatsListener = function(listener) {
  *
  * @returns {void}
  */
-Statistics.prototype.attachLongTasksStats = function(conference) {
+Statistics.prototype.attachLongTasksStats = function() {
     if (!browser.supportsPerformanceObserver()) {
         logger.warn('Performance observer for long tasks not supported by browser!');
 
@@ -318,10 +373,10 @@ Statistics.prototype.attachLongTasksStats = function(conference) {
         this.eventEmitter,
         Statistics.longTasksStatsInterval);
 
-    conference.on(
+    this.conference.on(
         JitsiConferenceEvents.CONFERENCE_JOINED,
         () => this.performanceObserverStats.startObserver());
-    conference.on(
+    this.conference.on(
         JitsiConferenceEvents.CONFERENCE_LEFT,
         () => this.performanceObserverStats.stopObserver());
 };
@@ -388,10 +443,12 @@ Statistics.prototype.dispose = function() {
     }
 };
 
-Statistics.stopLocalStats = function(stream) {
+Statistics.stopLocalStats = function(track) {
     if (!Statistics.audioLevelsEnabled) {
         return;
     }
+
+    const stream = track.getOriginalStream();
 
     for (let i = 0; i < Statistics.localStats.length; i++) {
         if (Statistics.localStats[i].stream === stream) {
@@ -441,14 +498,22 @@ Statistics.prototype.startCallStats = function(tpc, remoteUserID) {
 
         return;
     }
+    let confID = this.options.confID;
+
+    // confID - domain/tenant/roomName
+    // roomName - meeting name or breakout room ID
+    // For breakout rooms we change the conference ID used for callstats to use
+    // the room ID instead of the meeting name
+    if (!confID.endsWith(this.options.roomName)) {
+        confID = `${this.options.confID.slice(0, this.options.confID.lastIndexOf('/'))}/${this.options.roomName}`;
+    }
 
     logger.info(`Starting CallStats for ${tpc}...`);
-
     const newInstance
         = new CallStats(
             tpc,
             {
-                confID: this.options.confID,
+                confID,
                 remoteUserID
             });
 
@@ -566,14 +631,15 @@ Statistics.prototype.sendScreenSharingEvent
  * Notifies the statistics module that we are now the dominant speaker of the
  * conference.
  * @param {String} roomJid - The room jid where the speaker event occurred.
+ * @param {boolean} silence - Whether the dominant speaker is silent or not.
  */
-Statistics.prototype.sendDominantSpeakerEvent = function(roomJid) {
+Statistics.prototype.sendDominantSpeakerEvent = function(roomJid, silence) {
     for (const cs of this.callsStatsInstances.values()) {
         cs.sendDominantSpeakerEvent();
     }
 
     // xmpp send dominant speaker event
-    this.xmpp.sendDominantSpeakerEvent(roomJid);
+    this.xmpp.sendDominantSpeakerEvent(roomJid, silence);
 };
 
 /**

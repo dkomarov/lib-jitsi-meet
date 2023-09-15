@@ -14,9 +14,12 @@ module.exports = function(config) {
 
         // list of files / patterns to load in the browser
         files: [
-            'https://code.jquery.com/jquery-3.5.1.min.js',
             'node_modules/core-js/index.js',
-            './modules/**/*.spec.js'
+            'node_modules/jquery/dist/jquery.slim.min.js',
+            './modules/**/*.spec.js',
+            './modules/**/*.spec.ts',
+            './service/**/*.spec.ts',
+            './*.spec.ts'
         ],
 
         // list of files to exclude
@@ -28,7 +31,8 @@ module.exports = function(config) {
         //  https://npmjs.org/browse/keyword/karma-preprocessor
         preprocessors: {
             'node_modules/core-js/**': [ 'webpack' ],
-            './**/*.spec.js': [ 'webpack', 'sourcemap' ]
+            './**/*.spec.js': [ 'webpack', 'sourcemap' ],
+            './**/*.spec.ts': [ 'webpack', 'sourcemap' ]
         },
 
         // test results reporter to use

@@ -343,7 +343,7 @@ export default class CallStats {
      * the <tt>userID</tt> aka endpoint ID, see CallStats docs for more info.
      * @param {string} options.userName the <tt>userName</tt> part of
      * the <tt>userID</tt> aka display name, see CallStats docs for more info.
-     * @param {String} options.configParams the set of parameters
+     * @param {object} options.configParams the set of parameters
      * to enable/disable certain features in the library. See CallStats docs for more info.
      *
      */
@@ -385,20 +385,6 @@ export default class CallStats {
                 CallStats._initCallback,
                 undefined,
                 configParams);
-
-            const getWiFiStatsMethod = options.getWiFiStatsMethod;
-
-            if (getWiFiStatsMethod) {
-                CallStats.backend.attachWifiStatsHandler(getWiFiStatsMethod);
-
-                getWiFiStatsMethod().then(result => {
-                    if (result) {
-                        logger.info('Reported wifi addresses:'
-                            , JSON.parse(result).addresses);
-                    }
-                })
-                .catch(() => {});// eslint-disable-line no-empty-function
-            }
 
             return true;
         } catch (e) {

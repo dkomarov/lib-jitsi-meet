@@ -1,5 +1,5 @@
 import { getLogger } from '@jitsi/logger';
-import async from 'async';
+import { queue } from 'async-es';
 
 const logger = getLogger(__filename);
 
@@ -11,7 +11,7 @@ export default class AsyncQueue {
      * Creates new instance.
      */
     constructor() {
-        this._queue = async.queue(this._processQueueTasks.bind(this), 1);
+        this._queue = queue(this._processQueueTasks.bind(this), 1);
         this._stopped = false;
     }
 
@@ -32,6 +32,13 @@ export default class AsyncQueue {
             logger.error(`Task failed: ${error?.stack}`);
             finishedCallback(error);
         }
+    }
+
+    /**
+     * Pauses the execution of the tasks on the queue.
+     */
+    pause() {
+        this._queue.pause();
     }
 
     /**
@@ -58,6 +65,13 @@ export default class AsyncQueue {
             return;
         }
         this._queue.push(task, callback);
+    }
+
+    /**
+     * Resumes the execution of the tasks on the queue.
+     */
+    resume() {
+        this._queue.resume();
     }
 
     /**

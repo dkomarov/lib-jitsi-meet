@@ -1,14 +1,15 @@
-/* global $ */
-
+import { safeJsonParse } from '@jitsi/js-utils/json';
 import { getLogger } from '@jitsi/logger';
+import $ from 'jquery';
 import { $msg, Strophe } from 'strophe.js';
 import 'strophejs-plugin-disco';
 
 import * as JitsiConnectionErrors from '../../JitsiConnectionErrors';
 import * as JitsiConnectionEvents from '../../JitsiConnectionEvents';
-import XMPPEvents from '../../service/xmpp/XMPPEvents';
+import { XMPPEvents } from '../../service/xmpp/XMPPEvents';
 import browser from '../browser';
 import { E2EEncryption } from '../e2ee/E2EEncryption';
+import FeatureFlags from '../flags/FeatureFlags';
 import Statistics from '../statistics/statistics';
 import GlobalOnErrorHandler from '../util/GlobalOnErrorHandler';
 import Listenable from '../util/Listenable';
@@ -16,6 +17,7 @@ import RandomUtil from '../util/RandomUtil';
 
 import Caps, { parseDiscoInfo } from './Caps';
 import XmppConnection from './XmppConnection';
+import Moderator from './moderator';
 import MucConnectionPlugin from './strophe.emuc';
 import JingleConnectionPlugin from './strophe.jingle';
 import initStropheLogger from './strophe.logger';
@@ -137,6 +139,13 @@ export default class XMPP extends Listenable {
         this.token = token;
         this.authenticatedUser = false;
 
+        if (!this.options.deploymentInfo) {
+            this.options.deploymentInfo = {};
+        }
+
+        // Cache of components used for certain features.
+        this._components = [];
+
         initStropheNativePlugins();
 
         const xmppPing = options.xmppPing || {};
@@ -153,8 +162,10 @@ export default class XMPP extends Listenable {
             websocketKeepAlive: options.websocketKeepAlive,
             websocketKeepAliveUrl: options.websocketKeepAliveUrl,
             xmppPing,
-            shard: options.deploymentInfo?.shard
+            shard: options.deploymentInfo.shard
         });
+
+        this.moderator = new Moderator(this);
 
         // forwards the shard changed event
         this.connection.on(XmppConnection.Events.CONN_SHARD_CHANGED, () => {
@@ -231,9 +242,6 @@ export default class XMPP extends Listenable {
         // XEP-0294
         // this.caps.addFeature('urn:xmpp:jingle:apps:rtp:rtp-hdrext:0');
 
-        this.caps.addFeature('urn:ietf:rfc:5761'); // rtcp-mux
-        this.caps.addFeature('urn:ietf:rfc:5888'); // a=group, e.g. bundle
-
         // this.caps.addFeature('urn:ietf:rfc:5576'); // a=ssrc
 
         // Enable Lipsync ?
@@ -248,6 +256,26 @@ export default class XMPP extends Listenable {
 
         if (E2EEncryption.isSupported(this.options)) {
             this.caps.addFeature(FEATURE_E2EE, false, true);
+        }
+
+        // Advertise source-name signaling when the endpoint supports it.
+        logger.debug('Source-name signaling is enabled');
+        this.caps.addFeature('http://jitsi.org/source-name');
+
+        logger.debug('Receiving multiple video streams is enabled');
+        this.caps.addFeature('http://jitsi.org/receive-multiple-video-streams');
+
+        // Advertise support for ssrc-rewriting.
+        if (FeatureFlags.isSsrcRewritingSupported()) {
+            this.caps.addFeature('http://jitsi.org/ssrc-rewriting-1');
+        }
+
+        // Use "-1" as a version that we can bump later. This should match
+        // the version added in moderator.js, this one here is mostly defined
+        // for keeping stats, since it is not made available to jocofo at
+        // the time of the initial conference-request.
+        if (FeatureFlags.isJoinAsVisitorSupported()) {
+            this.caps.addFeature('http://jitsi.org/visitors-1');
         }
     }
 
@@ -417,14 +445,22 @@ export default class XMPP extends Listenable {
         identities.forEach(identity => {
             if (identity.type === 'av_moderation') {
                 this.avModerationComponentAddress = identity.name;
+                this._components.push(this.avModerationComponentAddress);
+            }
+
+            if (identity.type === 'end_conference') {
+                this.endConferenceComponentAddress = identity.name;
+                this._components.push(this.endConferenceComponentAddress);
             }
 
             if (identity.type === 'speakerstats') {
                 this.speakerStatsComponentAddress = identity.name;
+                this._components.push(this.speakerStatsComponentAddress);
             }
 
             if (identity.type === 'conference_duration') {
                 this.conferenceDurationComponentAddress = identity.name;
+                this._components.push(this.conferenceDurationComponentAddress);
             }
 
             if (identity.type === 'lobbyrooms') {
@@ -454,16 +490,42 @@ export default class XMPP extends Listenable {
                 this.options.deploymentInfo.region = this.connection.region = identity.name;
             }
 
+            if (identity.type === 'release') {
+                this.options.deploymentInfo.backendRelease = identity.name;
+            }
+
             if (identity.type === 'breakout_rooms') {
                 this.breakoutRoomsComponentAddress = identity.name;
+                this._components.push(this.breakoutRoomsComponentAddress);
+
+                const processBreakoutRoomsFeatures = f => {
+                    this.breakoutRoomsFeatures = {};
+
+                    f.forEach(fr => {
+                        if (fr.endsWith('#rename')) {
+                            this.breakoutRoomsFeatures.rename = true;
+                        }
+                    });
+                };
+
+                if (features) {
+                    processBreakoutRoomsFeatures(features);
+                } else {
+                    identity.name && this.caps.getFeaturesAndIdentities(identity.name, identity.type)
+                        .then(({ features: f }) => processBreakoutRoomsFeatures(f))
+                        .catch(e => logger.warn('Error getting features for breakout rooms.', e && e.message));
+                }
+            }
+
+            if (identity.type === 'room_metadata') {
+                this.roomMetadataComponentAddress = identity.name;
+                this._components.push(this.roomMetadataComponentAddress);
             }
         });
 
         this._maybeSendDeploymentInfoStat(true);
 
-        if (this.avModerationComponentAddress
-            || this.speakerStatsComponentAddress
-            || this.conferenceDurationComponentAddress) {
+        if (this._components.length > 0) {
             this.connection.addHandler(this._onPrivateMessage.bind(this), null, 'message', null, null);
         }
     }
@@ -635,6 +697,8 @@ export default class XMPP extends Listenable {
             jid = configDomain || (location && location.hostname);
         }
 
+        this._startConnecting = true;
+
         return this._connect(jid, password);
     }
 
@@ -748,15 +812,17 @@ export default class XMPP extends Listenable {
     disconnect(ev) {
         if (this.disconnectInProgress) {
             return this.disconnectInProgress;
-        } else if (!this.connection) {
+        } else if (!this.connection || !this._startConnecting) {
+            // we have created a connection, but never called connect we still want to resolve on calling disconnect
+            // this is visitors use case when using http to send conference request.
             return Promise.resolve();
         }
 
         this.disconnectInProgress = new Promise(resolve => {
             const disconnectListener = (credentials, status) => {
                 if (status === Strophe.Status.DISCONNECTED) {
-                    resolve();
                     this.eventEmitter.removeListener(XMPPEvents.CONNECTION_STATUS_CHANGED, disconnectListener);
+                    resolve();
                 }
             };
 
@@ -806,6 +872,8 @@ export default class XMPP extends Listenable {
         }
 
         this.connection.disconnect();
+
+        this._startConnecting = false;
 
         if (this.connection.options.sync !== true) {
             this.connection.flush();
@@ -889,8 +957,9 @@ export default class XMPP extends Listenable {
      * Notifies speaker stats component if available that we are the new
      * dominant speaker in the conference.
      * @param {String} roomJid - The room jid where the speaker event occurred.
+     * @param {boolean} silence - Whether the dominant speaker is silent or not.
      */
-    sendDominantSpeakerEvent(roomJid) {
+    sendDominantSpeakerEvent(roomJid, silence) {
         // no speaker stats component advertised
         if (!this.speakerStatsComponentAddress || !roomJid) {
             return;
@@ -900,18 +969,19 @@ export default class XMPP extends Listenable {
 
         msg.c('speakerstats', {
             xmlns: 'http://jitsi.org/jitmeet',
-            room: roomJid })
+            room: roomJid,
+            silence })
             .up();
 
         this.connection.send(msg);
     }
 
     /**
-     * Sends facial expression to speaker stats component.
+     * Sends face landmarks to speaker stats component.
      * @param {String} roomJid - The room jid where the speaker event occurred.
      * @param {Object} payload - The expression to be sent to the speaker stats.
      */
-    sendFacialExpressionEvent(roomJid, payload) {
+    sendFaceLandmarksEvent(roomJid, payload) {
         // no speaker stats component advertised
         if (!this.speakerStatsComponentAddress || !roomJid) {
             return;
@@ -919,10 +989,11 @@ export default class XMPP extends Listenable {
 
         const msg = $msg({ to: this.speakerStatsComponentAddress });
 
-        msg.c('facialExpression', {
+        msg.c('faceLandmarks', {
             xmlns: 'http://jitsi.org/jitmeet',
             room: roomJid,
-            expression: payload.facialExpression,
+            faceExpression: payload.faceExpression,
+            timestamp: payload.timestamp,
             duration: payload.duration
         }).up();
 
@@ -945,7 +1016,7 @@ export default class XMPP extends Listenable {
         }
 
         try {
-            const json = JSON.parse(jsonString);
+            const json = safeJsonParse(jsonString);
 
             // Handle non-exception-throwing cases:
             // Neither JSON.parse(false) or JSON.parse(1234) throw errors,
@@ -983,10 +1054,7 @@ export default class XMPP extends Listenable {
     _onPrivateMessage(msg) {
         const from = msg.getAttribute('from');
 
-        if (!(from === this.speakerStatsComponentAddress
-            || from === this.conferenceDurationComponentAddress
-            || from === this.avModerationComponentAddress
-            || from === this.breakoutRoomsComponentAddress)) {
+        if (!this._components.includes(from)) {
             return true;
         }
 
@@ -1006,6 +1074,8 @@ export default class XMPP extends Listenable {
             this.eventEmitter.emit(XMPPEvents.AV_MODERATION_RECEIVED, parsedJson);
         } else if (parsedJson[JITSI_MEET_MUC_TYPE] === 'breakout_rooms') {
             this.eventEmitter.emit(XMPPEvents.BREAKOUT_ROOMS_EVENT, parsedJson);
+        } else if (parsedJson[JITSI_MEET_MUC_TYPE] === 'room_metadata') {
+            this.eventEmitter.emit(XMPPEvents.ROOM_METADATA_EVENT, parsedJson);
         }
 
         return true;
@@ -1039,14 +1109,20 @@ export default class XMPP extends Listenable {
         if (aprops && Object.keys(aprops).length > 0) {
             const logObject = {};
 
-            logObject.id = 'deployment_info';
             for (const attr in aprops) {
                 if (aprops.hasOwnProperty(attr)) {
                     logObject[attr] = aprops[attr];
                 }
             }
 
-            Statistics.sendLog(JSON.stringify(logObject));
+            // Let's push to analytics any updates that may have come from the backend
+            Statistics.analytics.addPermanentProperties({ ...logObject });
+
+            logObject.id = 'deployment_info';
+            const entry = JSON.stringify(logObject);
+
+            Statistics.sendLog(entry);
+            logger.info(entry);
         }
 
         this.sendDeploymentInfo = false;

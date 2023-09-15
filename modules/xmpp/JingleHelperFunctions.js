@@ -1,10 +1,9 @@
-/* global $ */
-
+import { safeJsonParse } from '@jitsi/js-utils/json';
 import { getLogger } from '@jitsi/logger';
+import $ from 'jquery';
 import { $build } from 'strophe.js';
 
-import * as MediaType from '../../service/RTC/MediaType';
-import FeatureFlags from '../flags/FeatureFlags';
+import { MediaType } from '../../service/RTC/MediaType';
 
 const logger = getLogger(__filename);
 
@@ -18,7 +17,7 @@ function _createSourceExtension(owner, sourceCompactJson) {
     const node = $build('source', {
         xmlns: 'urn:xmpp:jingle:apps:rtp:ssma:0',
         ssrc: sourceCompactJson.s,
-        name: FeatureFlags.isSourceNameSignalingEnabled() ? sourceCompactJson.n : undefined
+        name: sourceCompactJson.n
     });
 
     if (sourceCompactJson.m) {
@@ -125,7 +124,7 @@ export function expandSourcesFromJson(iq, jsonMessageXml) {
     let json;
 
     try {
-        json = JSON.parse(jsonMessageXml.textContent);
+        json = safeJsonParse(jsonMessageXml.textContent);
     } catch (error) {
         logger.error(`json-message XML contained invalid JSON, ignoring: ${jsonMessageXml.textContent}`);
 
@@ -157,10 +156,8 @@ export function expandSourcesFromJson(iq, jsonMessageXml) {
             if (videoSources?.length) {
                 for (let i = 0; i < videoSources.length; i++) {
                     videoRtpDescription.appendChild(_createSourceExtension(owner, videoSources[i]));
+                    ssrcs.push(videoSources[i]?.s);
                 }
-
-                // Log only the first video ssrc per endpoint.
-                ssrcs.push(videoSources[0]?.s);
             }
 
             if (videoSsrcGroups?.length) {
@@ -171,8 +168,8 @@ export function expandSourcesFromJson(iq, jsonMessageXml) {
             if (audioSources?.length) {
                 for (let i = 0; i < audioSources.length; i++) {
                     audioRtpDescription.appendChild(_createSourceExtension(owner, audioSources[i]));
+                    ssrcs.push(audioSources[i]?.s);
                 }
-                ssrcs.push(audioSources[0]?.s);
             }
 
             if (audioSsrcGroups?.length) {

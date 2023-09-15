@@ -124,14 +124,16 @@ const ScreenObtainer = {
      *
      * @param onSuccess - Success callback.
      * @param onFailure - Failure callback.
+     * @param {Object} options - Optional parameters.
      */
-    obtainScreenOnElectron(onSuccess, onFailure) {
+    obtainScreenOnElectron(onSuccess, onFailure, options = {}) {
         if (window.JitsiMeetScreenObtainer && window.JitsiMeetScreenObtainer.openDesktopPicker) {
-            const { desktopSharingFrameRate, desktopSharingSources } = this.options;
+            const { desktopSharingFrameRate, desktopSharingResolution, desktopSharingSources } = this.options;
 
             window.JitsiMeetScreenObtainer.openDesktopPicker(
                 {
-                    desktopSharingSources: desktopSharingSources || [ 'screen', 'window' ]
+                    desktopSharingSources:
+                        options.desktopSharingSources || desktopSharingSources || [ 'screen', 'window' ]
                 },
                 (streamId, streamType, screenShareAudio = false) => {
                     if (streamId) {
@@ -168,19 +170,25 @@ const ScreenObtainer = {
                                     chromeMediaSourceId: streamId,
                                     minFrameRate: desktopSharingFrameRate?.min ?? SS_DEFAULT_FRAME_RATE,
                                     maxFrameRate: desktopSharingFrameRate?.max ?? SS_DEFAULT_FRAME_RATE,
-                                    maxWidth: window.screen.width,
-                                    maxHeight: window.screen.height
+                                    minWidth: desktopSharingResolution?.width?.min,
+                                    minHeight: desktopSharingResolution?.height?.min,
+                                    maxWidth: desktopSharingResolution?.width?.max ?? window.screen.width,
+                                    maxHeight: desktopSharingResolution?.height?.max ?? window.screen.height
                                 }
                             }
                         };
 
                         // We have to use the old API on Electron to get a desktop stream.
                         navigator.mediaDevices.getUserMedia(constraints)
-                            .then(stream => onSuccess({
-                                stream,
-                                sourceId: streamId,
-                                sourceType: streamType
-                            }), onFailure);
+                            .then(stream => {
+                                this.setContentHint(stream);
+                                onSuccess({
+                                    stream,
+                                    sourceId: streamId,
+                                    sourceType: streamType
+                                });
+                            })
+                            .catch(err => onFailure(err));
                     } else {
                         // As noted in Chrome Desktop Capture API:
                         // If user didn't select any source (i.e. canceled the prompt)
@@ -214,12 +222,34 @@ const ScreenObtainer = {
             getDisplayMedia = navigator.mediaDevices.getDisplayMedia.bind(navigator.mediaDevices);
         }
 
-        const { desktopSharingFrameRate } = this.options;
-        const video = typeof desktopSharingFrameRate === 'object' ? { frameRate: desktopSharingFrameRate } : true;
         const audio = this._getAudioConstraints();
+        let video = {};
+        const { desktopSharingFrameRate } = this.options;
 
-        // At the time of this writing 'min' constraint for fps is not supported by getDisplayMedia.
+        if (typeof desktopSharingFrameRate === 'object') {
+            video.frameRate = desktopSharingFrameRate;
+        }
+
+        // At the time of this writing 'min' constraint for fps is not supported by getDisplayMedia on any of the
+        // browsers. getDisplayMedia will fail with an error "invalid constraints" in this case.
         video.frameRate && delete video.frameRate.min;
+
+        if (browser.isChromiumBased()) {
+            // Allow users to seamlessly switch which tab they are sharing without having to select the tab again.
+            browser.isVersionGreaterThan(106) && (video.surfaceSwitching = 'include');
+
+            // Set bogus resolution constraints to work around
+            // https://bugs.chromium.org/p/chromium/issues/detail?id=1056311 for low fps screenshare. Capturing SS at
+            // very high resolutions restricts the framerate. Therefore, skip this hack when capture fps > 5 fps.
+            if (!(desktopSharingFrameRate?.max > SS_DEFAULT_FRAME_RATE)) {
+                video.height = 99999;
+                video.width = 99999;
+            }
+        }
+
+        if (Object.keys(video).length === 0) {
+            video = true;
+        }
 
         const constraints = {
             video,
@@ -231,6 +261,7 @@ const ScreenObtainer = {
 
         getDisplayMedia(constraints)
             .then(stream => {
+                this.setContentHint(stream);
                 callback({
                     stream,
                     sourceId: stream.id
@@ -268,6 +299,7 @@ const ScreenObtainer = {
 
         navigator.mediaDevices.getDisplayMedia({ video: true })
             .then(stream => {
+                this.setContentHint(stream);
                 callback({
                     stream,
                     sourceId: stream.id });
@@ -276,6 +308,24 @@ const ScreenObtainer = {
                 errorCallback(new JitsiTrackError(JitsiTrackErrors
                     .SCREENSHARING_USER_CANCELED));
             });
+    },
+
+    /** Sets the contentHint on the transmitted MediaStreamTrack to indicate charaterstics in the video stream, which
+     * informs RTCPeerConnection on how to encode the track (to prefer motion or individual frame detail).
+     *
+     * @param {MediaStream} stream - The captured desktop stream.
+     * @returns {void}
+     */
+    setContentHint(stream) {
+        const { desktopSharingFrameRate } = this.options;
+        const desktopTrack = stream.getVideoTracks()[0];
+
+        // Set contentHint on the desktop track based on the fps requested.
+        if ('contentHint' in desktopTrack) {
+            desktopTrack.contentHint = desktopSharingFrameRate?.max > SS_DEFAULT_FRAME_RATE ? 'motion' : 'detail';
+        } else {
+            logger.warn('MediaStreamTrack contentHint attribute not supported');
+        }
     },
 
     /**

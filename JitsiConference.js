@@ -4,46 +4,46 @@ import $ from "jquery";
 import isEqual from "lodash.isequal";
 import { Strophe } from "strophe.js";
 
-import * as JitsiConferenceErrors from './JitsiConferenceErrors';
-import JitsiConferenceEventManager from './JitsiConferenceEventManager';
-import * as JitsiConferenceEvents from './JitsiConferenceEvents';
-import JitsiParticipant from './JitsiParticipant';
-import JitsiTrackError from './JitsiTrackError';
-import * as JitsiTrackErrors from './JitsiTrackErrors';
-import * as JitsiTrackEvents from './JitsiTrackEvents';
-import authenticateAndUpgradeRole from './authenticateAndUpgradeRole';
-import { CodecSelection } from './modules/RTC/CodecSelection';
-import RTC from './modules/RTC/RTC';
-import { SS_DEFAULT_FRAME_RATE } from './modules/RTC/ScreenObtainer';
-import browser from './modules/browser';
-import ConnectionQuality from './modules/connectivity/ConnectionQuality';
-import IceFailedHandling from './modules/connectivity/IceFailedHandling';
-import * as DetectionEvents from './modules/detection/DetectionEvents';
-import NoAudioSignalDetection from './modules/detection/NoAudioSignalDetection';
-import P2PDominantSpeakerDetection from './modules/detection/P2PDominantSpeakerDetection';
-import VADAudioAnalyser from './modules/detection/VADAudioAnalyser';
-import VADNoiseDetection from './modules/detection/VADNoiseDetection';
-import VADTalkMutedDetection from './modules/detection/VADTalkMutedDetection';
-import { E2EEncryption } from './modules/e2ee/E2EEncryption';
-import E2ePing from './modules/e2eping/e2eping';
-import Jvb121EventGenerator from './modules/event/Jvb121EventGenerator';
-import FeatureFlags from './modules/flags/FeatureFlags';
-import { LiteModeContext } from './modules/litemode/LiteModeContext';
-import ReceiveVideoController from './modules/qualitycontrol/ReceiveVideoController';
-import SendVideoController from './modules/qualitycontrol/SendVideoController';
-import RecordingManager from './modules/recording/RecordingManager';
-import Settings from './modules/settings/Settings';
-import AudioOutputProblemDetector from './modules/statistics/AudioOutputProblemDetector';
-import AvgRTPStatsReporter from './modules/statistics/AvgRTPStatsReporter';
-import LocalStatsCollector from './modules/statistics/LocalStatsCollector';
-import SpeakerStatsCollector from './modules/statistics/SpeakerStatsCollector';
-import Statistics from './modules/statistics/statistics';
-import GlobalOnErrorHandler from './modules/util/GlobalOnErrorHandler';
-import RandomUtil from './modules/util/RandomUtil';
-import ComponentsVersions from './modules/version/ComponentsVersions';
-import VideoSIPGW from './modules/videosipgw/VideoSIPGW';
-import * as VideoSIPGWConstants from './modules/videosipgw/VideoSIPGWConstants';
-import SignalingLayerImpl from './modules/xmpp/SignalingLayerImpl';
+import * as JitsiConferenceErrors from "./JitsiConferenceErrors";
+import JitsiConferenceEventManager from "./JitsiConferenceEventManager";
+import * as JitsiConferenceEvents from "./JitsiConferenceEvents";
+import JitsiParticipant from "./JitsiParticipant";
+import JitsiTrackError from "./JitsiTrackError";
+import * as JitsiTrackErrors from "./JitsiTrackErrors";
+import * as JitsiTrackEvents from "./JitsiTrackEvents";
+import authenticateAndUpgradeRole from "./authenticateAndUpgradeRole";
+import { CodecSelection } from "./modules/RTC/CodecSelection";
+import RTC from "./modules/RTC/RTC";
+import { SS_DEFAULT_FRAME_RATE } from "./modules/RTC/ScreenObtainer";
+import browser from "./modules/browser";
+import ConnectionQuality from "./modules/connectivity/ConnectionQuality";
+import IceFailedHandling from "./modules/connectivity/IceFailedHandling";
+import * as DetectionEvents from "./modules/detection/DetectionEvents";
+import NoAudioSignalDetection from "./modules/detection/NoAudioSignalDetection";
+import P2PDominantSpeakerDetection from "./modules/detection/P2PDominantSpeakerDetection";
+import VADAudioAnalyser from "./modules/detection/VADAudioAnalyser";
+import VADNoiseDetection from "./modules/detection/VADNoiseDetection";
+import VADTalkMutedDetection from "./modules/detection/VADTalkMutedDetection";
+import { E2EEncryption } from "./modules/e2ee/E2EEncryption";
+import E2ePing from "./modules/e2eping/e2eping";
+import Jvb121EventGenerator from "./modules/event/Jvb121EventGenerator";
+import FeatureFlags from "./modules/flags/FeatureFlags";
+import { LiteModeContext } from "./modules/litemode/LiteModeContext";
+import ReceiveVideoController from "./modules/qualitycontrol/ReceiveVideoController";
+import SendVideoController from "./modules/qualitycontrol/SendVideoController";
+import RecordingManager from "./modules/recording/RecordingManager";
+import Settings from "./modules/settings/Settings";
+import AudioOutputProblemDetector from "./modules/statistics/AudioOutputProblemDetector";
+import AvgRTPStatsReporter from "./modules/statistics/AvgRTPStatsReporter";
+import LocalStatsCollector from "./modules/statistics/LocalStatsCollector";
+import SpeakerStatsCollector from "./modules/statistics/SpeakerStatsCollector";
+import Statistics from "./modules/statistics/statistics";
+import GlobalOnErrorHandler from "./modules/util/GlobalOnErrorHandler";
+import RandomUtil from "./modules/util/RandomUtil";
+import ComponentsVersions from "./modules/version/ComponentsVersions";
+import VideoSIPGW from "./modules/videosipgw/VideoSIPGW";
+import * as VideoSIPGWConstants from "./modules/videosipgw/VideoSIPGWConstants";
+import SignalingLayerImpl from "./modules/xmpp/SignalingLayerImpl";
 import {
     FEATURE_E2EE,
     FEATURE_JIGASI,
@@ -372,8 +372,9 @@ export default function JitsiConference(options) {
      */
     this._videoSenderLimitReached = undefined;
 
-    this._firefoxP2pEnabled = browser.isVersionGreaterThan(109)
-        && (this.options.config.testing?.enableFirefoxP2p ?? true);
+    this._firefoxP2pEnabled =
+        browser.isVersionGreaterThan(109) &&
+        (this.options.config.testing?.enableFirefoxP2p ?? true);
 }
 
 // FIXME convert JitsiConference to ES6 - ASAP !
@@ -428,19 +429,27 @@ JitsiConference.prototype._init = function (options = {}) {
     // Get the codec preference settings from config.js.
     const codecSettings = {
         jvb: {
-            preferenceOrder: browser.isMobileDevice() && config.videoQuality?.mobileCodecPreferenceOrder
-                ? config.videoQuality.mobileCodecPreferenceOrder
-                : config.videoQuality?.codecPreferenceOrder,
-            disabledCodec: _getCodecMimeType(config.videoQuality?.disabledCodec),
-            preferredCodec: _getCodecMimeType(config.videoQuality?.preferredCodec)
+            preferenceOrder:
+                browser.isMobileDevice() &&
+                config.videoQuality?.mobileCodecPreferenceOrder
+                    ? config.videoQuality.mobileCodecPreferenceOrder
+                    : config.videoQuality?.codecPreferenceOrder,
+            disabledCodec: _getCodecMimeType(
+                config.videoQuality?.disabledCodec
+            ),
+            preferredCodec: _getCodecMimeType(
+                config.videoQuality?.preferredCodec
+            ),
         },
         p2p: {
-            preferenceOrder: browser.isMobileDevice() && config.p2p?.mobileCodecPreferenceOrder
-                ? config.p2p.mobileCodecPreferenceOrder
-                : config.p2p?.codecPreferenceOrder,
+            preferenceOrder:
+                browser.isMobileDevice() &&
+                config.p2p?.mobileCodecPreferenceOrder
+                    ? config.p2p.mobileCodecPreferenceOrder
+                    : config.p2p?.codecPreferenceOrder,
             disabledCodec: _getCodecMimeType(config.p2p?.disabledCodec),
-            preferredCodec: _getCodecMimeType(config.p2p?.preferredCodec)
-        }
+            preferredCodec: _getCodecMimeType(config.p2p?.preferredCodec),
+        },
     };
 
     this.codecSelection = new CodecSelection(this, codecSettings);
@@ -682,7 +691,10 @@ JitsiConference.prototype._init = function (options = {}) {
     }
 
     // Publish the codec preference to presence.
-    this.setLocalParticipantProperty('codecList', this.codecSelection.getCodecPreferenceList('jvb'));
+    this.setLocalParticipantProperty(
+        "codecList",
+        this.codecSelection.getCodecPreferenceList("jvb")
+    );
 
     // Set transcription language presence extension.
     // In case the language config is undefined or has the default value that the transcriber uses
@@ -999,34 +1011,6 @@ JitsiConference.prototype.getAuthLogin = function () {
 };
 
 /**
- * Check if external authentication is enabled for this conference.
- */
-JitsiConference.prototype.isExternalAuthEnabled = function() {
-    return this.room && this.room.xmpp.moderator.isExternalAuthEnabled();
-};
-
-/**
- * Get url for external authentication.
- * @param {boolean} [urlForPopup] if true then return url for login popup,
- *                                else url of login page.
- * @returns {Promise}
- */
-JitsiConference.prototype.getExternalAuthUrl = function (urlForPopup) {
-    return new Promise((resolve, reject) => {
-        if (!this.isExternalAuthEnabled()) {
-            reject();
-
-            return;
-        }
-        if (urlForPopup) {
-            this.room.xmpp.moderator.getPopupLoginUrl(this.room.roomjid, resolve, reject);
-        } else {
-            this.room.xmpp.moderator.getLoginUrl(this.room.roomjid, resolve, reject);
-        }
-    });
-};
-
-/**
  * Returns the local tracks of the given media type, or all local tracks if no
  * specific type is given.
  * @param {MediaType} [mediaType] Optional media type (audio or video).
@@ -1096,7 +1080,7 @@ JitsiConference.prototype.on = function (eventId, handler) {
  * @param handler handler for the event.
  *
  */
-JitsiConference.prototype.once = function(eventId, handler) {
+JitsiConference.prototype.once = function (eventId, handler) {
     if (this.eventEmitter) {
         this.eventEmitter.once(eventId, handler);
     }
@@ -1419,14 +1403,20 @@ JitsiConference.prototype._getInitialLocalTracks = function () {
     return this.getLocalTracks().filter((track) => {
         const trackType = track.getType();
 
-            if (trackType === MediaType.AUDIO
-                    && (!(this.isStartAudioMuted() || this.startMutedPolicy.audio)
-                    || browser.isWebKitBased()
-                    || browser.isReactNative())) {
-                return true;
-            } else if (trackType === MediaType.VIDEO && !this.isStartVideoMuted() && !this.startMutedPolicy.video) {
-                return true;
-            }
+        if (
+            trackType === MediaType.AUDIO &&
+            (!(this.isStartAudioMuted() || this.startMutedPolicy.audio) ||
+                browser.isWebKitBased() ||
+                browser.isReactNative())
+        ) {
+            return true;
+        } else if (
+            trackType === MediaType.VIDEO &&
+            !this.isStartVideoMuted() &&
+            !this.startMutedPolicy.video
+        ) {
+            return true;
+        }
 
         return false;
     });
@@ -1722,8 +1712,14 @@ JitsiConference.prototype._setTrackMuteStatus = function (
     let presenceChanged = false;
 
     if (localTrack) {
-        presenceChanged = this._signalingLayer.setTrackMuteStatus(localTrack.getSourceName(), isMuted);
-        presenceChanged && logger.debug(`Mute state of ${localTrack} changed to muted=${isMuted}`);
+        presenceChanged = this._signalingLayer.setTrackMuteStatus(
+            localTrack.getSourceName(),
+            isMuted
+        );
+        presenceChanged &&
+            logger.debug(
+                `Mute state of ${localTrack} changed to muted=${isMuted}`
+            );
     }
 
     return presenceChanged;
@@ -2469,8 +2465,10 @@ JitsiConference.prototype._onIncomingCallP2P = function (
             errorMsg:
                 "P2P across two endpoints in different SDP modes is disabled",
         };
-    } else if ((!this.isP2PEnabled() && !this.isP2PTestModeEnabled())
-        || (browser.isFirefox() && !this._firefoxP2pEnabled)) {
+    } else if (
+        (!this.isP2PEnabled() && !this.isP2PTestModeEnabled()) ||
+        (browser.isFirefox() && !this._firefoxP2pEnabled)
+    ) {
         rejectReason = {
             reason: "decline",
             reasonDescription: "P2P disabled",
@@ -2565,18 +2563,15 @@ JitsiConference.prototype._acceptJvbIncomingCall = function (
     );
 
     try {
-        jingleSession.initialize(
-            this.room,
-            this.rtc,
-            this._signalingLayer,
-            {
-                ...this.options.config,
-                codecSettings: {
-                    mediaType: MediaType.VIDEO,
-                    codecList: this.codecSelection.getCodecPreferenceList('jvb')
-                },
-                enableInsertableStreams: this.isE2EEEnabled() || FeatureFlags.isRunInLiteModeEnabled()
-            });
+        jingleSession.initialize(this.room, this.rtc, this._signalingLayer, {
+            ...this.options.config,
+            codecSettings: {
+                mediaType: MediaType.VIDEO,
+                codecList: this.codecSelection.getCodecPreferenceList("jvb"),
+            },
+            enableInsertableStreams:
+                this.isE2EEEnabled() || FeatureFlags.isRunInLiteModeEnabled(),
+        });
     } catch (error) {
         GlobalOnErrorHandler.callErrorHandler(error);
         logger.error(error);
@@ -2906,7 +2901,7 @@ JitsiConference.prototype.stopRecording = function (sessionID) {
 /**
  * Returns true if the SIP calls are supported and false otherwise
  */
-JitsiConference.prototype.isSIPCallingSupported = function() {
+JitsiConference.prototype.isSIPCallingSupported = function () {
     return this.room?.xmpp?.moderator?.isSipGatewayEnabled() ?? false;
 };
 
@@ -3032,7 +3027,7 @@ JitsiConference.prototype.setStartMutedPolicy = function (policy) {
     // Do not apply the startMutedPolicy locally on the moderator, the moderator should join with available local
     // sources and the policy needs to be applied only on users that join the call after.
     // this.startMutedPolicy = policy;
-    this.room.addOrReplaceInPresence('startmuted', {
+    this.room.addOrReplaceInPresence("startmuted", {
         attributes: {
             audio: policy.audio,
             video: policy.video,
@@ -3414,7 +3409,7 @@ JitsiConference.prototype._acceptP2PIncomingCall = function (
             ...this.options.config,
             codecSettings: {
                 mediaType: MediaType.VIDEO,
-                codecList: this.codecSelection.getCodecPreferenceList('p2p')
+                codecList: this.codecSelection.getCodecPreferenceList("p2p"),
             },
             enableInsertableStreams:
                 this.isE2EEEnabled() || FeatureFlags.isRunInLiteModeEnabled(),
@@ -3834,7 +3829,7 @@ JitsiConference.prototype._startP2PSession = function (remoteJid) {
             ...this.options.config,
             codecSettings: {
                 mediaType: MediaType.VIDEO,
-                codecList: this.codecSelection.getCodecPreferenceList('p2p')
+                codecList: this.codecSelection.getCodecPreferenceList("p2p"),
             },
             enableInsertableStreams:
                 this.isE2EEEnabled() || FeatureFlags.isRunInLiteModeEnabled(),
@@ -3887,12 +3882,14 @@ JitsiConference.prototype._suspendMediaTransferForJvbConnection = function () {
  * originates from the user left event.
  * @private
  */
-JitsiConference.prototype._maybeStartOrStopP2P = function(userLeftEvent) {
-    if (!this.isP2PEnabled()
-            || this.isP2PTestModeEnabled()
-            || (browser.isFirefox() && !this._firefoxP2pEnabled)
-            || this.isE2EEEnabled()) {
-        logger.info('Auto P2P disabled');
+JitsiConference.prototype._maybeStartOrStopP2P = function (userLeftEvent) {
+    if (
+        !this.isP2PEnabled() ||
+        this.isP2PTestModeEnabled() ||
+        (browser.isFirefox() && !this._firefoxP2pEnabled) ||
+        this.isE2EEEnabled()
+    ) {
+        logger.info("Auto P2P disabled");
 
         return;
     }
@@ -4104,11 +4101,21 @@ JitsiConference.prototype._updateRoomPresence = function (jingleSession, ctx) {
     for (const track of localTracks) {
         const muted = track.isMuted();
 
-        muteStatusChanged = this._setTrackMuteStatus(track.getType(), track, muted);
-        muteStatusChanged && logger.debug(`Updating mute state of ${track} in presence to muted=${muted}`);
+        muteStatusChanged = this._setTrackMuteStatus(
+            track.getType(),
+            track,
+            muted
+        );
+        muteStatusChanged &&
+            logger.debug(
+                `Updating mute state of ${track} in presence to muted=${muted}`
+            );
         if (track.getType() === MediaType.VIDEO) {
             videoTypeChanged = this._setNewVideoType(track);
-            videoTypeChanged && logger.debug(`Updating videoType in presence to ${track.getVideoType()}`);
+            videoTypeChanged &&
+                logger.debug(
+                    `Updating videoType in presence to ${track.getVideoType()}`
+                );
         }
         presenceChanged =
             presenceChanged || muteStatusChanged || videoTypeChanged;

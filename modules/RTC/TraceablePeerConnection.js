@@ -1424,7 +1424,7 @@ const normalizePlanB = function(desc) {
  * @returns {Array<Object>} ssrcLines with removed lines referencing msid "-".
  */
 function replaceDefaultUnifiedPlanMsid(ssrcLines = []) {
-    if (!browser.isChrome() || !browser.isVersionGreaterThan(70)) {
+    if (!browser.isChromiumBased()) {
         return ssrcLines;
     }
 
@@ -2677,7 +2677,7 @@ TraceablePeerConnection.prototype.setSenderVideoConstraints = function(frameHeig
     if ((localVideoTrack.getVideoType() === VideoType.CAMERA && configuredResolution === frameHeight)
         || (localVideoTrack.getVideoType() === VideoType.DESKTOP
             && frameHeight > 0
-            && configuredResolution === localVideoTrack.getTrack()?.getSettings()?.height)) {
+            && configuredResolution === localVideoTrack.getHeight())) {
         return Promise.resolve();
     }
 

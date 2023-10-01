@@ -45,46 +45,7 @@ const ScreenObtainer = {
      * @private
      */
     _createObtainStreamMethod() {
-        if (browser.isNWJS()) {
-            return (onSuccess, onFailure) => {
-                window.JitsiMeetNW.obtainDesktopStream(
-                    onSuccess,
-                    (error, constraints) => {
-                        let jitsiError;
-
-                        // FIXME:
-                        // This is very very dirty fix for recognising that the
-                        // user have clicked the cancel button from the Desktop
-                        // sharing pick window. The proper solution would be to
-                        // detect this in the NWJS application by checking the
-                        // streamId === "". Even better solution would be to
-                        // stop calling GUM from the NWJS app and just pass the
-                        // streamId to lib-jitsi-meet. This way the desktop
-                        // sharing implementation for NWJS and chrome extension
-                        // will be the same and lib-jitsi-meet will be able to
-                        // control the constraints, check the streamId, etc.
-                        //
-                        // I cannot find documentation about "InvalidStateError"
-                        // but this is what we are receiving from GUM when the
-                        // streamId for the desktop sharing is "".
-
-                        if (error && error.name === "InvalidStateError") {
-                            jitsiError = new JitsiTrackError(
-                                JitsiTrackErrors.SCREENSHARING_USER_CANCELED
-                            );
-                        } else {
-                            jitsiError = new JitsiTrackError(
-                                error,
-                                constraints,
-                                ["desktop"]
-                            );
-                        }
-                        typeof onFailure === "function" &&
-                            onFailure(jitsiError);
-                    }
-                );
-            };
-        } else if (browser.isElectron()) {
+        if (browser.isElectron()) {
             return this.obtainScreenOnElectron;
         } else if (
             browser.isReactNative() &&
@@ -205,16 +166,17 @@ const ScreenObtainer = {
                         };
 
                         // We have to use the old API on Electron to get a desktop stream.
-                        navigator.mediaDevices.getUserMedia(constraints)
-                            .then(stream => {
+                        navigator.mediaDevices
+                            .getUserMedia(constraints)
+                            .then((stream) => {
                                 this.setContentHint(stream);
                                 onSuccess({
                                     stream,
                                     sourceId: streamId,
-                                    sourceType: streamType
+                                    sourceType: streamType,
                                 });
                             })
-                            .catch(err => onFailure(err));
+                            .catch((err) => onFailure(err));
                     } else {
                         // As noted in Chrome Desktop Capture API:
                         // If user didn't select any source (i.e. canceled the prompt)
@@ -275,7 +237,7 @@ const ScreenObtainer = {
 
         if (browser.isChromiumBased()) {
             // Allow users to seamlessly switch which tab they are sharing without having to select the tab again.
-            browser.isVersionGreaterThan(106) &&
+            browser.isEngineVersionGreaterThan(106) &&
                 (video.surfaceSwitching = "include");
 
             // Set bogus resolution constraints to work around
@@ -302,7 +264,7 @@ const ScreenObtainer = {
         logger.info("Using getDisplayMedia for screen sharing", constraints);
 
         getDisplayMedia(constraints)
-            .then(stream => {
+            .then((stream) => {
                 this.setContentHint(stream);
                 callback({
                     stream,
@@ -352,8 +314,9 @@ const ScreenObtainer = {
     obtainScreenFromGetDisplayMediaRN(callback, errorCallback) {
         logger.info("Using getDisplayMedia for screen sharing");
 
-        navigator.mediaDevices.getDisplayMedia({ video: true })
-            .then(stream => {
+        navigator.mediaDevices
+            .getDisplayMedia({ video: true })
+            .then((stream) => {
                 this.setContentHint(stream);
                 callback({
                     stream,
@@ -380,10 +343,13 @@ const ScreenObtainer = {
         const desktopTrack = stream.getVideoTracks()[0];
 
         // Set contentHint on the desktop track based on the fps requested.
-        if ('contentHint' in desktopTrack) {
-            desktopTrack.contentHint = desktopSharingFrameRate?.max > SS_DEFAULT_FRAME_RATE ? 'motion' : 'detail';
+        if ("contentHint" in desktopTrack) {
+            desktopTrack.contentHint =
+                desktopSharingFrameRate?.max > SS_DEFAULT_FRAME_RATE
+                    ? "motion"
+                    : "detail";
         } else {
-            logger.warn('MediaStreamTrack contentHint attribute not supported');
+            logger.warn("MediaStreamTrack contentHint attribute not supported");
         }
     },
 

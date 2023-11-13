@@ -78,7 +78,7 @@ import { XMPPEvents } from "./service/xmpp/XMPPEvents";
 // const testSvr = "whiteboard.hopto.org";
 // const prodSvr = "sidespeak.webhop.me";
 
-// const logger = getLogger(__filename);
+const logger = getLogger(__filename);
 // const wss = new WebSocket(
 //     "wss://" + (testSvr ? testSvr : prodSvr) + ":8888/ws"
 // );

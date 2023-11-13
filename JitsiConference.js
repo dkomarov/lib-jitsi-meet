@@ -75,38 +75,38 @@ import {
 } from "./service/statistics/AnalyticsEvents";
 import { XMPPEvents } from "./service/xmpp/XMPPEvents";
 
-const testSvr = "whiteboard.hopto.org";
-const prodSvr = "sidespeak.webhop.me";
+// const testSvr = "whiteboard.hopto.org";
+// const prodSvr = "sidespeak.webhop.me";
 
-const logger = getLogger(__filename);
-const wss = new WebSocket(
-    "wss://" + (testSvr ? testSvr : prodSvr) + ":8888/ws"
-);
+// const logger = getLogger(__filename);
+// const wss = new WebSocket(
+//     "wss://" + (testSvr ? testSvr : prodSvr) + ":8888/ws"
+// );
 
-wss.onopen = (ws) => {
-    console.log("WebSocket connection is open");
+// wss.onopen = (ws) => {
+//     console.log("WebSocket connection is open");
 
-    const originalLog = logger.log;
+//     const originalLog = logger.log;
 
-    logger.log = function () {
-        const logMessage = Array.from(arguments).join(" ");
-        ws.send("logger message:", logMessage);
-        originalLog.apply(logger, arguments);
-    };
-};
+//     logger.log = function () {
+//         const logMessage = Array.from(arguments).join(" ");
+//         ws.send("logger message:", logMessage);
+//         originalLog.apply(logger, arguments);
+//     };
+// };
 
-wss.onmessage = (event) => {
-    const message = event.data;
-    console.log("Received message:", message);
-};
+// wss.onmessage = (event) => {
+//     const message = event.data;
+//     console.log("Received message:", message);
+// };
 
-wss.onerror = (error) => {
-    console.error("WebSocket error:", error);
-};
+// wss.onerror = (error) => {
+//     console.error("WebSocket error:", error);
+// };
 
-wss.onclose = (event) => {
-    console.log("WebSocket connection is closed");
-};
+// wss.onclose = (event) => {
+//     console.log("WebSocket connection is closed");
+// };
 
 /**
  * How long since Jicofo is supposed to send a session-initiate, before

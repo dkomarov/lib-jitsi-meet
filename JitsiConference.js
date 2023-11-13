@@ -157,10 +157,6 @@ function _getCodecMimeType(codec) {
  * @param {number} [options.config.channelLastN=-1] The requested amount of
  * videos are going to be delivered after the value is in effect. Set to -1 for
  * unlimited or all available videos.
- * @param {number} [options.config.forceJVB121Ratio]
- * "Math.random() < forceJVB121Ratio" will determine whether a 2 people
- * conference should be moved to the JVB instead of P2P. The decision is made on
- * the responder side, after ICE succeeds on the P2P connection.
  * @constructor
  *
  * FIXME Make all methods which are called from lib-internal classes
@@ -2264,14 +2260,13 @@ JitsiConference.prototype.onMemberKicked = function (
     const actorParticipant = this.participants.get(actorId);
 
     if (isSelfPresence) {
+        this.leave().finally(() => this.xmpp.disconnect());
         this.eventEmitter.emit(
             JitsiConferenceEvents.KICKED,
             actorParticipant,
             reason,
             isReplaceParticipant
         );
-
-        this.leave().finally(() => this.xmpp.disconnect());
 
         return;
     }
@@ -2778,22 +2773,15 @@ JitsiConference.prototype.onCallEnded = function (
     } else if (jingleSession === this.p2pJingleSession) {
         const stopOptions = {};
 
-        // It's the responder who decides to enforce JVB mode, so that both
-        // initiator and responder are aware if it was intentional.
-        if (reasonCondition === "decline" && reasonText === "force JVB121") {
-            logger.info("In forced JVB 121 mode...");
-            Statistics.analytics.addPermanentProperties({ forceJvb121: true });
-        } else if (
+        if (
             reasonCondition === "connectivity-error" &&
             reasonText === "ICE FAILED"
         ) {
-            // It can happen that the other peer detects ICE failed and
-            // terminates the session, before we get the event on our side.
-            // But we are able to parse the reason and mark it here.
+            // It can happen that the other peer detects ICE failed and terminates the session, before we get the event
+            // on our side. But we are able to parse the reason and mark it here.
             Statistics.analytics.addPermanentProperties({ p2pFailed: true });
         } else if (reasonCondition === "success" && reasonText === "restart") {
-            // When we are restarting media sessions we don't want to switch the tracks
-            // to the JVB just yet.
+            // When we are restarting media sessions we don't want to switch the tracks to the JVB just yet.
             stopOptions.requestRestart = true;
         }
         this._stopP2PSession(stopOptions);
@@ -3516,26 +3504,12 @@ JitsiConference.prototype._onIceConnectionEstablished = function (
     }
 
     let done = false;
-    const forceJVB121Ratio = this.options.config.forceJVB121Ratio;
 
     // We don't care about the JVB case, there's nothing to be done
     if (!jingleSession.isP2P) {
         done = true;
     } else if (this.p2pJingleSession !== jingleSession) {
         logger.error("CONNECTION_ESTABLISHED - wrong P2P session instance ?!");
-
-        done = true;
-    } else if (
-        !jingleSession.isInitiator &&
-        typeof forceJVB121Ratio === "number" &&
-        Math.random() < forceJVB121Ratio
-    ) {
-        logger.info(`Forcing JVB 121 mode (ratio=${forceJVB121Ratio})...`);
-        Statistics.analytics.addPermanentProperties({ forceJvb121: true });
-        this._stopP2PSession({
-            reason: "decline",
-            reasonDescription: "force JVB121",
-        });
 
         done = true;
     }
@@ -3752,7 +3726,6 @@ JitsiConference.prototype._setP2PStatus = function (newStatus) {
         // in case they have persisted, after session with another peer.
         Statistics.analytics.addPermanentProperties({
             p2pFailed: false,
-            forceJvb121: false,
         });
 
         // Sync up video transfer active in case p2pJingleSession not existed

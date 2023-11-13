@@ -193,6 +193,10 @@ export default class Moderator extends Listenable {
 
         if (FeatureFlags.isJoinAsVisitorSupported() && !config.iAmRecorder && !config.iAmSipGateway) {
             conferenceRequest.properties['visitors-version'] = 1;
+
+            if (this.options.preferVisitor) {
+                conferenceRequest.properties.visitor = true;
+            }
         }
 
         return conferenceRequest;
@@ -391,7 +395,7 @@ export default class Moderator extends Listenable {
 
             // we want to ignore redirects when this is jibri (record/live-stream or a sip jibri)
             if (conferenceRequest.vnode && !this.options.iAmRecorder && !this.options.iAmSipGateway) {
-                logger.warn(`Redirected to: ${conferenceRequest.vnode} with focusJid ${conferenceRequest.focusJid} }`);
+                logger.warn(`Redirected to: ${conferenceRequest.vnode} with focusJid ${conferenceRequest.focusJid}`);
 
                 this.xmpp.eventEmitter.emit(CONNECTION_REDIRECTED, conferenceRequest.vnode, conferenceRequest.focusJid);
 

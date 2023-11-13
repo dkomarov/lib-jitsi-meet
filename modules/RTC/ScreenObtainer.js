@@ -225,7 +225,8 @@ const ScreenObtainer = {
 
         const audio = this._getAudioConstraints();
         let video = {};
-        const { desktopSharingFrameRate } = this.options;
+        const constraintOpts = {};
+        const { desktopSharingFrameRate, screenShareSettings } = this.options;
 
         if (typeof desktopSharingFrameRate === "object") {
             video.frameRate = desktopSharingFrameRate;
@@ -236,9 +237,32 @@ const ScreenObtainer = {
         video.frameRate && delete video.frameRate.min;
 
         if (browser.isChromiumBased()) {
+            // Show users the current tab is the preferred capture source, default: false.
+            browser.isEngineVersionGreaterThan(93) &&
+                (constraintOpts.preferCurrentTab =
+                    screenShareSettings?.desktopPreferCurrentTab || false);
+
+            // Allow users to select system audio, default: include.
+            browser.isEngineVersionGreaterThan(104) &&
+                (constraintOpts.systemAudio =
+                    screenShareSettings?.desktopSystemAudio || "include");
+
             // Allow users to seamlessly switch which tab they are sharing without having to select the tab again.
             browser.isEngineVersionGreaterThan(106) &&
-                (video.surfaceSwitching = "include");
+                (constraintOpts.surfaceSwitching =
+                    screenShareSettings?.desktopSurfaceSwitching || "include");
+
+            // Allow a user to be shown a preference for what screen is to be captured, default: unset.
+            browser.isEngineVersionGreaterThan(106) &&
+                screenShareSettings?.desktopDisplaySurface &&
+                (video.displaySurface =
+                    screenShareSettings?.desktopDisplaySurface);
+
+            // Allow users to select the current tab as a capture source, default: exclude.
+            browser.isEngineVersionGreaterThan(111) &&
+                (constraintOpts.selfBrowserSurface =
+                    screenShareSettings?.desktopSelfBrowserSurface ||
+                    "exclude");
 
             // Set bogus resolution constraints to work around
             // https://bugs.chromium.org/p/chromium/issues/detail?id=1056311 for low fps screenshare. Capturing SS at
@@ -247,6 +271,11 @@ const ScreenObtainer = {
                 video.height = 99999;
                 video.width = 99999;
             }
+        }
+
+        // Allow a user to be shown a preference for what screen is to be captured.
+        if (browser.isSafari() && screenShareSettings?.desktopDisplaySurface) {
+            video.displaySurface = screenShareSettings?.desktopDisplaySurface;
         }
 
         if (Object.keys(video).length === 0) {
@@ -258,6 +287,7 @@ const ScreenObtainer = {
                 displaySurface: "monitor",
             },
             audio,
+            ...constraintOpts,
             cursor: "motion", //"always",
         };
 
@@ -266,6 +296,36 @@ const ScreenObtainer = {
         getDisplayMedia(constraints)
             .then((stream) => {
                 this.setContentHint(stream);
+
+                // Apply min fps constraints to the track so that 0Hz mode doesn't kick in.
+                // https://bugs.chromium.org/p/webrtc/issues/detail?id=15539
+                if (browser.isChromiumBased()) {
+                    const track = stream.getVideoTracks()[0];
+                    let minFps = SS_DEFAULT_FRAME_RATE;
+
+                    if (
+                        typeof desktopSharingFrameRate?.min === "number" &&
+                        desktopSharingFrameRate.min > 0
+                    ) {
+                        minFps = desktopSharingFrameRate.min;
+                    }
+
+                    const contraints = {
+                        frameRate: {
+                            min: minFps,
+                        },
+                    };
+
+                    try {
+                        track.applyConstraints(contraints);
+                    } catch (err) {
+                        logger.warn(
+                            `Min fps=${minFps} constraint could not be applied on the desktop track,` +
+                                `${err.message}`
+                        );
+                    }
+                }
+
                 callback({
                     stream,
                     sourceId: stream.id,
@@ -280,8 +340,8 @@ const ScreenObtainer = {
 
                 logger.error(
                     "getDisplayMedia error",
-                    constraints,
-                    errorDetails
+                    JSON.stringify(constraints),
+                    JSON.stringify(errorDetails)
                 );
 
                 if (

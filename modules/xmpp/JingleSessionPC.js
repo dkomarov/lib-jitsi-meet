@@ -3,10 +3,8 @@ import $ from 'jquery';
 import { $build, $iq, Strophe } from 'strophe.js';
 
 import { JitsiTrackEvents } from '../../JitsiTrackEvents';
-import CodecMimeType from '../../service/RTC/CodecMimeType';
 import { MediaDirection } from '../../service/RTC/MediaDirection';
 import { MediaType } from '../../service/RTC/MediaType';
-import { VideoType } from '../../service/RTC/VideoType';
 import {
     ICE_DURATION,
     ICE_STATE_CHANGED
@@ -18,7 +16,7 @@ import SDP from '../sdp/SDP';
 import SDPDiffer from '../sdp/SDPDiffer';
 import SDPUtil from '../sdp/SDPUtil';
 import Statistics from '../statistics/statistics';
-import AsyncQueue from '../util/AsyncQueue';
+import AsyncQueue, { ClearedQueueError } from '../util/AsyncQueue';
 import GlobalOnErrorHandler from '../util/GlobalOnErrorHandler';
 
 import browser from './../browser';
@@ -97,7 +95,6 @@ function _addSourceElement(description, s, ssrc_, msid) {
  * @property {boolean} gatherStats - Described in the config.js[1].
  * @property {object} p2p - Peer to peer related options (FIXME those could be
  * fetched from config.p2p on the upper level).
- * @property {boolean} preferH264 - Described in the config.js[1].
  * @property {Object} testing - Testing and/or experimental options.
  * @property {boolean} webrtcIceUdpDisable - Described in the config.js[1].
  * @property {boolean} webrtcIceTcpDisable - Described in the config.js[1].
@@ -403,23 +400,25 @@ export default class JingleSessionPC extends JingleSession {
         pcOptions.capScreenshareBitrate = false;
         pcOptions.codecSettings = options.codecSettings;
         pcOptions.enableInsertableStreams = options.enableInsertableStreams;
-        pcOptions.videoQuality = options.videoQuality;
+
+        if (options.videoQuality) {
+            const settings = Object.entries(options.videoQuality)
+            .map(entry => {
+                entry[0] = entry[0].toLowerCase();
+
+                return entry;
+            });
+
+            pcOptions.videoQuality = Object.fromEntries(settings);
+        }
         pcOptions.forceTurnRelay = options.forceTurnRelay;
         pcOptions.audioQuality = options.audioQuality;
         pcOptions.usesUnifiedPlan = this.usesUnifiedPlan = browser.supportsUnifiedPlan();
+        pcOptions.disableSimulcast = this.isP2P ? true : options.disableSimulcast;
 
-        if (this.isP2P) {
-            // simulcast needs to be disabled for P2P (121) calls
-            pcOptions.disableSimulcast = true;
-        } else {
-            // H264 scalability is not supported on jvb, so simulcast needs to be disabled when H264 is preferred.
-            pcOptions.disableSimulcast
-                = options.disableSimulcast || options.videoQuality?.preferredCodec === CodecMimeType.H264;
-
+        if (!this.isP2P) {
             // Do not send lower spatial layers for low fps screenshare and enable them only for high fps screenshare.
-            pcOptions.capScreenshareBitrate = pcOptions.disableSimulcast
-                || !(typeof options.desktopSharingFrameRate?.max === 'number'
-                    && options.desktopSharingFrameRate?.max > SS_DEFAULT_FRAME_RATE);
+            pcOptions.capScreenshareBitrate = !(options.desktopSharingFrameRate?.max > SS_DEFAULT_FRAME_RATE);
         }
 
         if (options.startSilent) {
@@ -926,16 +925,15 @@ export default class JingleSessionPC extends JingleSession {
 
         ssrcs.each((i, ssrcElement) => {
             const ssrc = Number(ssrcElement.getAttribute('ssrc'));
+            let sourceName;
 
             if (ssrcElement.hasAttribute('name')) {
-                const sourceName = ssrcElement.getAttribute('name');
-
-                this._signalingLayer.setTrackSourceName(ssrc, sourceName);
+                sourceName = ssrcElement.getAttribute('name');
             }
 
             if (this.isP2P) {
                 // In P2P all SSRCs are owner by the remote peer
-                this._signalingLayer.setSSRCOwner(ssrc, Strophe.getResourceFromJid(this.remoteJid));
+                this._signalingLayer.setSSRCOwner(ssrc, Strophe.getResourceFromJid(this.remoteJid), sourceName);
             } else {
                 $(ssrcElement)
                     .find('>ssrc-info[xmlns="http://jitsi.org/jitmeet"]')
@@ -946,7 +944,7 @@ export default class JingleSessionPC extends JingleSession {
                             if (isNaN(ssrc) || ssrc < 0) {
                                 logger.warn(`${this} Invalid SSRC ${ssrc} value received for ${owner}`);
                             } else {
-                                this._signalingLayer.setSSRCOwner(ssrc, getEndpointId(owner));
+                                this._signalingLayer.setSSRCOwner(ssrc, getEndpointId(owner), sourceName);
                             }
                         }
                     });
@@ -997,7 +995,7 @@ export default class JingleSessionPC extends JingleSession {
                 // modify sendSessionAccept method to do that
                 this.sendSessionAccept(() => {
                     // Start processing tasks on the modification queue.
-                    logger.debug('Resuming the modification queue after session is established!');
+                    logger.debug(`${this} Resuming the modification queue after session is established!`);
                     this.modificationQueue.resume();
 
                     success();
@@ -1117,7 +1115,7 @@ export default class JingleSessionPC extends JingleSession {
                     this.state = JingleSessionState.ACTIVE;
 
                     // Start processing tasks on the modification queue.
-                    logger.debug('Resuming the modification queue after session is established!');
+                    logger.debug(`${this} Resuming the modification queue after session is established!`);
                     this.modificationQueue.resume();
                     const newLocalSdp = new SDP(this.peerconnection.localDescription.sdp);
 
@@ -1322,6 +1320,13 @@ export default class JingleSessionPC extends JingleSession {
             workFunction,
             error => {
                 if (error) {
+                    if (error instanceof ClearedQueueError) {
+                        // The session might have been terminated before the task was executed, making it obsolete.
+                        logger.debug(`${this} ICE restart task aborted: session terminated`);
+                        success();
+
+                        return;
+                    }
                     logger.error(`${this} ICE restart task failed: ${error}`);
                     failure(error);
                 } else {
@@ -1782,7 +1787,7 @@ export default class JingleSessionPC extends JingleSession {
 
         for (const src of message.mappedSources) {
             // eslint-disable-next-line prefer-const
-            let { owner, source, ssrc, videoType } = src;
+            let { owner, source, ssrc } = src;
             const isNewSsrc = this.peerconnection.addRemoteSsrc(ssrc, source);
             let lookupSsrc = ssrc;
 
@@ -1804,16 +1809,16 @@ export default class JingleSessionPC extends JingleSession {
                 logger.debug(`Existing SSRC ${ssrc}: new owner=${owner}, source-name=${source}`);
 
                 // Update the SSRC owner.
-                this._signalingLayer.setSSRCOwner(ssrc, owner);
+                this._signalingLayer.setSSRCOwner(ssrc, owner, source);
 
                 // Update the track with all the relevant info.
                 track.setSourceName(source);
                 track.setOwner(owner);
-                if (mediaType === MediaType.VIDEO) {
-                    const type = videoType === 'CAMERA' ? VideoType.CAMERA : VideoType.DESKTOP;
 
-                    track._setVideoType(type);
-                }
+                // Update the video type based on the type published by peer in its presence.
+                const { videoType } = this._signalingLayer.getPeerSourceInfo(owner, source);
+
+                track._setVideoType(videoType);
 
                 // Update the muted state on the track since the presence for this track could have been received
                 // before the updated source map is received on the bridge channel.
@@ -2195,6 +2200,13 @@ export default class JingleSessionPC extends JingleSession {
                 workFunction,
                 error => {
                     if (error) {
+                        if (error instanceof ClearedQueueError) {
+                            // The session might have been terminated before the task was executed, making it obsolete.
+                            logger.debug(`${this} renegotiation after addTrack aborted: session terminated`);
+                            resolve();
+
+                            return;
+                        }
                         logger.error(`${this} renegotiation after addTrack error`, error);
                         reject(error);
                     } else {
@@ -2307,6 +2319,13 @@ export default class JingleSessionPC extends JingleSession {
                 workFunction,
                 error => {
                     if (error) {
+                        if (error instanceof ClearedQueueError) {
+                            // The session might have been terminated before the task was executed, making it obsolete.
+                            logger.debug('Replace track aborted: session terminated');
+                            resolve();
+
+                            return;
+                        }
                         logger.error(`${this} Replace track error:`, error);
                         reject(error);
                     } else {
@@ -2505,6 +2524,13 @@ export default class JingleSessionPC extends JingleSession {
                 workFunction,
                 error => {
                     if (error) {
+                        if (error instanceof ClearedQueueError) {
+                            // The session might have been terminated before the task was executed, making it obsolete.
+                            logger.debug(`${this} ${operationName} aborted: session terminated`);
+                            resolve();
+
+                            return;
+                        }
                         logger.error(`${this} ${operationName} failed`);
                         reject(error);
                     } else {

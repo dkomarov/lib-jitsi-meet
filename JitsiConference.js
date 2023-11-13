@@ -343,7 +343,7 @@ export default function JitsiConference(options) {
      */
     if (this.isE2EESupported()) {
         logger.info("End-to-End Encryption is supported");
-        logger.info("Jitsi Meet version: 8615 (May 2023)");
+        // logger.info("Jitsi Meet version: 8615 (May 2023)");
 
         this._e2eEncryption = new E2EEncryption(this);
     }

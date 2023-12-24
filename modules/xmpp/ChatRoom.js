@@ -11,7 +11,6 @@ import AuthenticationEvents from '../../service/authentication/AuthenticationEve
 import { XMPPEvents } from '../../service/xmpp/XMPPEvents';
 import Settings from '../settings/Settings';
 import EventEmitterForwarder from '../util/EventEmitterForwarder';
-import GlobalOnErrorHandler from '../util/GlobalOnErrorHandler';
 import Listenable from '../util/Listenable';
 
 import AVModeration from './AVModeration';
@@ -235,7 +234,7 @@ export default class ChatRoom extends Listenable {
             preJoin.then(() => {
                 this.sendPresence(true);
                 this._removeConnListeners.push(
-                    this.connection.addEventListener(
+                    this.connection.addCancellableListener(
                         XmppConnection.Events.CONN_STATUS_CHANGED,
                         this.onConnStatusChanged.bind(this))
                 );
@@ -404,7 +403,6 @@ export default class ChatRoom extends Listenable {
                 }
             }
         }, error => {
-            GlobalOnErrorHandler.callErrorHandler(error);
             logger.error('Error getting room info: ', error);
         });
     }
@@ -445,10 +443,7 @@ export default class ChatRoom extends Listenable {
             if (!$(form).find(
                     '>query>x[xmlns="jabber:x:data"]'
                     + '>field[var="muc#roomconfig_whois"]').length) {
-                const errmsg = 'non-anonymous rooms not supported';
-
-                GlobalOnErrorHandler.callErrorHandler(new Error(errmsg));
-                logger.error(errmsg);
+                logger.error('non-anonymous rooms not supported');
 
                 return;
             }
@@ -470,7 +465,6 @@ export default class ChatRoom extends Listenable {
             this.connection.sendIQ(formSubmit);
 
         }, error => {
-            GlobalOnErrorHandler.callErrorHandler(error);
             logger.error('Error getting room configuration form: ', error);
         });
     }
@@ -895,7 +889,6 @@ export default class ChatRoom extends Listenable {
                 });
             }
         } catch (e) {
-            GlobalOnErrorHandler.callErrorHandler(e);
             logger.error(`Error processing:${node.tagName} node.`, e);
         }
     }
@@ -1866,6 +1859,12 @@ export default class ChatRoom extends Listenable {
             const onMucLeft = (doReject = false) => {
                 this.eventEmitter.removeListener(XMPPEvents.MUC_LEFT, onMucLeft);
                 clearTimeout(timeout);
+
+                // This will reset the joined flag to false. If we reset it earlier any self presence will be
+                // interpreted as muc join. That's why we reset the flag once we have received presence unavalable
+                // (MUC_LEFT).
+                this.clean();
+
                 if (doReject) {
                     // The timeout expired. Make sure we clean the EMUC state.
                     this.connection.emuc.doLeave(this.roomjid);
@@ -1877,8 +1876,6 @@ export default class ChatRoom extends Listenable {
 
             if (this.joined) {
                 timeout = setTimeout(() => onMucLeft(true), 5000);
-
-                this.clean();
                 this.eventEmitter.on(XMPPEvents.MUC_LEFT, onMucLeft);
                 this.doLeave(reason);
             } else {

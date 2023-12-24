@@ -44,10 +44,6 @@ export class TPCUtils {
         if (videoQualitySettings) {
             for (const codec of VIDEO_CODECS) {
                 const codecConfig = videoQualitySettings[codec];
-
-                if (!codecConfig) {
-                    continue; // eslint-disable-line no-continue
-                }
                 const bitrateSettings = codecConfig?.maxBitratesVideo
 
                     // Read the deprecated settings for max bitrates.
@@ -60,6 +56,10 @@ export class TPCUtils {
                             this.codecSettings[codec].maxBitratesVideo[value] = bitrateSettings[value];
                         }
                     });
+                }
+
+                if (!codecConfig) {
+                    continue; // eslint-disable-line no-continue
                 }
 
                 const scalabilityModeEnabled = this.codecSettings[codec].scalabilityModeEnabled
@@ -284,136 +284,6 @@ export class TPCUtils {
     }
 
     /**
-     * Ensures that the ssrcs associated with a FID ssrc-group appear in the correct order, i.e.,
-     * the primary ssrc first and the secondary rtx ssrc later. This is important for unified
-     * plan since we have only one FID group per media description.
-     * @param {Object} description the webRTC session description instance for the remote
-     * description.
-     * @private
-     */
-    ensureCorrectOrderOfSsrcs(description) {
-        const parsedSdp = transform.parse(description.sdp);
-
-        parsedSdp.media.forEach(mLine => {
-            if (mLine.type === MediaType.AUDIO) {
-                return;
-            }
-            if (!mLine.ssrcGroups || !mLine.ssrcGroups.length) {
-                return;
-            }
-            let reorderedSsrcs = [];
-
-            const ssrcs = new Set();
-
-            mLine.ssrcGroups.map(group =>
-                group.ssrcs
-                    .split(' ')
-                    .filter(Boolean)
-                    .forEach(ssrc => ssrcs.add(ssrc))
-            );
-
-            ssrcs.forEach(ssrc => {
-                const sources = mLine.ssrcs.filter(source => source.id.toString() === ssrc);
-
-                reorderedSsrcs = reorderedSsrcs.concat(sources);
-            });
-            mLine.ssrcs = reorderedSsrcs;
-        });
-
-        return new RTCSessionDescription({
-            type: description.type,
-            sdp: transform.write(parsedSdp)
-        });
-    }
-
-    /**
-     * Returns the transceiver associated with a given RTCRtpSender/RTCRtpReceiver.
-     *
-     * @param {string} mediaType - type of track associated with the transceiver 'audio' or 'video'.
-     * @param {JitsiLocalTrack} localTrack - local track to be used for lookup.
-     * @returns {RTCRtpTransceiver}
-     */
-    findTransceiver(mediaType, localTrack = null) {
-        const transceiver = localTrack?.track && localTrack.getOriginalStream()
-            ? this.pc.peerconnection.getTransceivers().find(t => t.sender?.track?.id === localTrack.getTrackId())
-            : this.pc.peerconnection.getTransceivers().find(t => t.receiver?.track?.kind === mediaType);
-
-        return transceiver;
-    }
-
-    /**
-     * Takes in a *unified plan* offer and inserts the appropriate
-     * parameters for adding simulcast receive support.
-     * @param {Object} desc - A session description object
-     * @param {String} desc.type - the type (offer/answer)
-     * @param {String} desc.sdp - the sdp content
-     *
-     * @return {Object} A session description (same format as above) object
-     * with its sdp field modified to advertise simulcast receive support
-     */
-    insertUnifiedPlanSimulcastReceive(desc) {
-        // a=simulcast line is not needed on browsers where we SDP munging is used for enabling on simulcast.
-        // Remove this check when the client switches to RID/MID based simulcast on all browsers.
-        if (browser.usesSdpMungingForSimulcast()) {
-            return desc;
-        }
-        const sdp = transform.parse(desc.sdp);
-        const idx = sdp.media.findIndex(mline => mline.type === MediaType.VIDEO);
-
-        if (sdp.media[idx].rids && (sdp.media[idx].simulcast_03 || sdp.media[idx].simulcast)) {
-            // Make sure we don't have the simulcast recv line on video descriptions other than
-            // the first video description.
-            sdp.media.forEach((mline, i) => {
-                if (mline.type === MediaType.VIDEO && i !== idx) {
-                    sdp.media[i].rids = undefined;
-                    sdp.media[i].simulcast = undefined;
-
-                    // eslint-disable-next-line camelcase
-                    sdp.media[i].simulcast_03 = undefined;
-                }
-            });
-
-            return new RTCSessionDescription({
-                type: desc.type,
-                sdp: transform.write(sdp)
-            });
-        }
-
-        // In order of highest to lowest spatial quality
-        sdp.media[idx].rids = [
-            {
-                id: SIM_LAYER_1_RID,
-                direction: 'recv'
-            },
-            {
-                id: SIM_LAYER_2_RID,
-                direction: 'recv'
-            },
-            {
-                id: SIM_LAYER_3_RID,
-                direction: 'recv'
-            }
-        ];
-
-        // Firefox 72 has stopped parsing the legacy rid= parameters in simulcast attributes.
-        // eslint-disable-next-line max-len
-        // https://www.fxsitecompat.dev/en-CA/docs/2019/pt-and-rid-in-webrtc-simulcast-attributes-are-no-longer-supported/
-        const simulcastLine = browser.isFirefox() && browser.isVersionGreaterThan(71)
-            ? `recv ${SIM_LAYER_RIDS.join(';')}`
-            : `recv rid=${SIM_LAYER_RIDS.join(';')}`;
-
-        // eslint-disable-next-line camelcase
-        sdp.media[idx].simulcast_03 = {
-            value: simulcastLine
-        };
-
-        return new RTCSessionDescription({
-            type: desc.type,
-            sdp: transform.write(sdp)
-        });
-    }
-
-    /**
     * Adds {@link JitsiLocalTrack} to the WebRTC peerconnection for the first time.
     * @param {JitsiLocalTrack} track - track to be added to the peerconnection.
     * @param {boolean} isInitiator - boolean that indicates if the endpoint is offerer in a p2p connection.
@@ -580,18 +450,62 @@ export class TPCUtils {
      * @param {JitsiLocalTrack} localVideoTrack The local video track.
      * @param {CodecMimeType} codec - The codec currently in use.
      * @param {number} maxHeight The resolution requested for the video track.
-     * @returns {number|undefined}
+     * @returns {Array<float>}
      */
     calculateEncodingsScaleFactor(localVideoTrack, codec, maxHeight) {
         if (this.pc.isSpatialScalabilityOn() && this.isRunningInSimulcastMode(codec)) {
-            return;
+            return this._getVideoStreamEncodings(localVideoTrack.getVideoType(), codec)
+                .map(encoding => encoding.scaleResolutionDownBy);
         }
 
         // Single video stream.
         const { scaleResolutionDownBy }
             = this._calculateActiveEncodingParams(localVideoTrack, codec, maxHeight);
 
-        return scaleResolutionDownBy;
+        return [ scaleResolutionDownBy, undefined, undefined ];
+    }
+
+    /**
+     * Ensures that the ssrcs associated with a FID ssrc-group appear in the correct order, i.e.,
+     * the primary ssrc first and the secondary rtx ssrc later. This is important for unified
+     * plan since we have only one FID group per media description.
+     * @param {Object} description the webRTC session description instance for the remote
+     * description.
+     * @private
+     */
+    ensureCorrectOrderOfSsrcs(description) {
+        const parsedSdp = transform.parse(description.sdp);
+
+        parsedSdp.media.forEach(mLine => {
+            if (mLine.type === MediaType.AUDIO) {
+                return;
+            }
+            if (!mLine.ssrcGroups || !mLine.ssrcGroups.length) {
+                return;
+            }
+            let reorderedSsrcs = [];
+
+            const ssrcs = new Set();
+
+            mLine.ssrcGroups.map(group =>
+                group.ssrcs
+                    .split(' ')
+                    .filter(Boolean)
+                    .forEach(ssrc => ssrcs.add(ssrc))
+            );
+
+            ssrcs.forEach(ssrc => {
+                const sources = mLine.ssrcs.filter(source => source.id.toString() === ssrc);
+
+                reorderedSsrcs = reorderedSsrcs.concat(sources);
+            });
+            mLine.ssrcs = reorderedSsrcs;
+        });
+
+        return new RTCSessionDescription({
+            type: description.type,
+            sdp: transform.write(parsedSdp)
+        });
     }
 
     /**
@@ -654,6 +568,72 @@ export class TPCUtils {
         }
 
         return maxHeight;
+    }
+
+    /**
+     * Takes in a *unified plan* offer and inserts the appropriate parameters for adding simulcast receive support.
+     * @param {Object} desc - A session description object
+     * @param {String} desc.type - the type (offer/answer)
+     * @param {String} desc.sdp - the sdp content
+     *
+     * @return {Object} A session description (same format as above) object with its sdp field modified to advertise
+     * simulcast receive support.
+     */
+    insertUnifiedPlanSimulcastReceive(desc) {
+        // a=simulcast line is not needed on browsers where we SDP munging is used for enabling on simulcast.
+        // Remove this check when the client switches to RID/MID based simulcast on all browsers.
+        if (browser.usesSdpMungingForSimulcast()) {
+            return desc;
+        }
+        const rids = [
+            {
+                id: SIM_LAYER_1_RID,
+                direction: 'recv'
+            },
+            {
+                id: SIM_LAYER_2_RID,
+                direction: 'recv'
+            },
+            {
+                id: SIM_LAYER_3_RID,
+                direction: 'recv'
+            }
+        ];
+
+        // Firefox 72 has stopped parsing the legacy rid= parameters in simulcast attributes.
+        // eslint-disable-next-line max-len
+        // https://www.fxsitecompat.dev/en-CA/docs/2019/pt-and-rid-in-webrtc-simulcast-attributes-are-no-longer-supported/
+        const simulcastLine = browser.isFirefox() && browser.isVersionGreaterThan(71)
+            ? `recv ${SIM_LAYER_RIDS.join(';')}`
+            : `recv rid=${SIM_LAYER_RIDS.join(';')}`;
+        const sdp = transform.parse(desc.sdp);
+        const mLines = sdp.media.filter(m => m.type === MediaType.VIDEO);
+        const senderMids = Array.from(this.pc._localTrackTransceiverMids.values());
+
+        mLines.forEach((mLine, idx) => {
+            // Make sure the simulcast recv line is only set on video descriptions that are associated with senders.
+            if (senderMids.find(sender => mLine.mid.toString() === sender.toString()) || idx === 0) {
+                if (!mLine.simulcast_03 || !mLine.simulcast) {
+                    mLine.rids = rids;
+
+                    // eslint-disable-next-line camelcase
+                    mLine.simulcast_03 = {
+                        value: simulcastLine
+                    };
+                }
+            } else {
+                mLine.rids = undefined;
+                mLine.simulcast = undefined;
+
+                // eslint-disable-next-line camelcase
+                mLine.simulcast_03 = undefined;
+            }
+        });
+
+        return new RTCSessionDescription({
+            type: desc.type,
+            sdp: transform.write(sdp)
+        });
     }
 
     /**
@@ -745,13 +725,15 @@ export class TPCUtils {
 
     /**
      * Set the simulcast stream encoding properties on the RTCRtpSender.
-     * @param {JitsiLocalTrack} track - the current track in use for which
-     * the encodings are to be set.
+     *
+     * @param {JitsiLocalTrack} localTrack - the current track in use for which the encodings are to be set.
      * @returns {Promise<void>} - resolved when done.
      */
-    setEncodings(track) {
-        const mediaType = track.getType();
-        const transceiver = this.findTransceiver(mediaType, track);
+    setEncodings(localTrack) {
+        const mediaType = localTrack.getType();
+        const transceiver = localTrack?.track && localTrack.getOriginalStream()
+            ? this.pc.peerconnection.getTransceivers().find(t => t.sender?.track?.id === localTrack.getTrackId())
+            : this.pc.peerconnection.getTransceivers().find(t => t.receiver?.track?.kind === mediaType);
         const parameters = transceiver?.sender?.getParameters();
 
         // Resolve if the encodings are not available yet. This happens immediately after the track is added to the
@@ -760,7 +742,7 @@ export class TPCUtils {
         if (!parameters?.encodings?.length) {
             return Promise.resolve();
         }
-        parameters.encodings = this._getStreamEncodings(track);
+        parameters.encodings = this._getStreamEncodings(localTrack);
 
         if (mediaType === MediaType.VIDEO) {
             return this.pc._updateVideoSenderParameters(() => transceiver.sender.setParameters(parameters));

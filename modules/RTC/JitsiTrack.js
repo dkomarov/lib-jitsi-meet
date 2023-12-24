@@ -1,9 +1,9 @@
 import { getLogger } from '@jitsi/logger';
-import EventEmitter from 'events';
 
 import * as JitsiTrackEvents from '../../JitsiTrackEvents';
 import { MediaType } from '../../service/RTC/MediaType';
 import browser from '../browser';
+import EventEmitter from '../util/EventEmitter';
 
 import RTCUtils from './RTCUtils';
 
@@ -43,10 +43,6 @@ export default class JitsiTrack extends EventEmitter {
             trackMediaType,
             videoType) {
         super();
-
-        // aliases for addListener/removeListener
-        this.addEventListener = this.addListener;
-        this.removeEventListener = this.off = this.removeListener;
 
         /**
          * Array with the HTML elements that are displaying the streams.
@@ -105,18 +101,6 @@ export default class JitsiTrack extends EventEmitter {
      */
     _attachTTFMTracker(container) { // eslint-disable-line no-unused-vars
         // Should be defined by the classes that are extending JitsiTrack
-    }
-
-    /**
-     * Eventually will trigger RTCEvents.TRACK_ATTACHED event.
-     * @param container the video/audio container to which this stream is
-     *        attached and for which event will be fired.
-     * @private
-     */
-    _maybeFireTrackAttached(container) {
-        if (this.conference && container) {
-            this.conference._onTrackAttach(this, container);
-        }
     }
 
     /**
@@ -235,7 +219,6 @@ export default class JitsiTrack extends EventEmitter {
             result = RTCUtils.attachMediaStream(container, this.stream);
         }
         this.containers.push(container);
-        this._maybeFireTrackAttached(container);
         this._attachTTFMTracker(container);
 
         return result;

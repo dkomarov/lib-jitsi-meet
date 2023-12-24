@@ -19,7 +19,6 @@ import SDPUtil from '../sdp/SDPUtil';
 import SdpConsistency from '../sdp/SdpConsistency';
 import SdpSimulcast from '../sdp/SdpSimulcast';
 import { SdpTransformWrap } from '../sdp/SdpTransformUtil';
-import * as GlobalOnErrorHandler from '../util/GlobalOnErrorHandler';
 
 import JitsiRemoteTrack from './JitsiRemoteTrack';
 import RTC from './RTC';
@@ -353,7 +352,7 @@ export default function TraceablePeerConnection(
 
     // override as desired
     this.trace = (what, info) => {
-        logger.debug(what, info);
+        logger.trace(what, info);
 
         this.updateLog.push({
             time: new Date(),
@@ -959,8 +958,7 @@ TraceablePeerConnection.prototype._remoteTrackAdded = function(stream, track, tr
 
     // look up an associated JID for a stream id
     if (!mediaType) {
-        GlobalOnErrorHandler.callErrorHandler(
-            new Error(`MediaType undefined for remote track, stream id: ${streamId}, track creation failed!`));
+        logger.error(`MediaType undefined for remote track, stream id: ${streamId}, track creation failed!`);
 
         return;
     }
@@ -988,9 +986,8 @@ TraceablePeerConnection.prototype._remoteTrackAdded = function(stream, track, tr
     }
 
     if (!mediaLine) {
-        GlobalOnErrorHandler.callErrorHandler(
-            new Error(`Matching media line not found in remote SDP for remote stream[id=${streamId},type=${mediaType}],`
-                + 'track creation failed!'));
+        logger.error(`Matching media line not found in remote SDP for remote stream[id=${streamId},type=${mediaType}],`
+                + 'track creation failed!');
 
         return;
     }
@@ -999,9 +996,8 @@ TraceablePeerConnection.prototype._remoteTrackAdded = function(stream, track, tr
 
     ssrcLines = ssrcLines.filter(line => line.indexOf(`msid:${streamId}`) !== -1);
     if (!ssrcLines.length) {
-        GlobalOnErrorHandler.callErrorHandler(
-            new Error(`No SSRC lines found in remote SDP for remote stream[msid=${streamId},type=${mediaType}]`
-                + 'track creation failed!'));
+        logger.error(`No SSRC lines found in remote SDP for remote stream[msid=${streamId},type=${mediaType}]`
+                + 'track creation failed!');
 
         return;
     }
@@ -1013,17 +1009,15 @@ TraceablePeerConnection.prototype._remoteTrackAdded = function(stream, track, tr
     const ownerEndpointId = this.signalingLayer.getSSRCOwner(trackSsrc);
 
     if (isNaN(trackSsrc) || trackSsrc < 0) {
-        GlobalOnErrorHandler.callErrorHandler(
-            new Error(`Invalid SSRC for remote stream[ssrc=${trackSsrc},id=${streamId},type=${mediaType}]`
-                + 'track creation failed!'));
+        logger.error(`Invalid SSRC for remote stream[ssrc=${trackSsrc},id=${streamId},type=${mediaType}]`
+                + 'track creation failed!');
 
         return;
     }
 
     if (!ownerEndpointId) {
-        GlobalOnErrorHandler.callErrorHandler(
-            new Error(`No SSRC owner known for remote stream[ssrc=${trackSsrc},id=${streamId},type=${mediaType}]`
-            + 'track creation failed!'));
+        logger.error(`No SSRC owner known for remote stream[ssrc=${trackSsrc},id=${streamId},type=${mediaType}]`
+            + 'track creation failed!');
 
         return;
     }
@@ -1152,13 +1146,13 @@ TraceablePeerConnection.prototype._remoteTrackRemoved = function(stream, track) 
     }
 
     if (!streamId) {
-        GlobalOnErrorHandler.callErrorHandler(new Error(`${this} remote track removal failed - no stream ID`));
+        logger.error(`${this} remote track removal failed - no stream ID`);
 
         return;
     }
 
     if (!trackId) {
-        GlobalOnErrorHandler.callErrorHandler(new Error(`${this} remote track removal failed - no track ID`));
+        logger.error(`${this} remote track removal failed - no track ID`);
 
         return;
     }
@@ -1167,7 +1161,7 @@ TraceablePeerConnection.prototype._remoteTrackRemoved = function(stream, track) 
         remoteTrack => remoteTrack.getStreamId() === streamId && remoteTrack.getTrackId() === trackId);
 
     if (!toBeRemoved) {
-        GlobalOnErrorHandler.callErrorHandler(new Error(`${this} remote track removal failed - track not found`));
+        logger.error(`${this} remote track removal failed - track not found`);
 
         return;
     }
@@ -1602,8 +1596,8 @@ const getters = {
         } else if (!this._usesUnifiedPlan) {
             if (browser.doesVideoMuteByStreamRemove()) {
                 desc = this.localSdpMunger.maybeAddMutedLocalVideoTracksToSDP(desc);
-                logger.debug(
-                    'getLocalDescription::postTransform (munge local SDP)', desc);
+                this.trace('getLocalDescription::postTransform (munge local SDP)',
+                    dumpSDP(desc));
             }
 
             // What comes out of this getter will be signalled over Jingle to
@@ -2551,12 +2545,10 @@ TraceablePeerConnection.prototype._setMaxBitrates = function(description, isLoca
     const codecScalabilityModeSettings = this.tpcUtils.codecSettings[currentCodec];
 
     for (const mLine of mLines) {
-        const isDoingKSvc = CodecMimeType.VP9 && !codecScalabilityModeSettings.scalabilityModeEnabled;
-        const isDoingTrueSvc = codecScalabilityModeSettings.scalabilityModeEnabled
-            && !codecScalabilityModeSettings.useSimulcast
-            && currentCodec !== CodecMimeType.H264;
+        const isDoingVp9KSvc = currentCodec === CodecMimeType.VP9
+            && !codecScalabilityModeSettings.scalabilityModeEnabled;
 
-        if (isDoingKSvc || isDoingTrueSvc) {
+        if (isDoingVp9KSvc || this.tpcUtils._isRunningInFullSvcMode(currentCodec)) {
             const bitrates = codecScalabilityModeSettings.maxBitratesVideo;
             const mid = mLine.mid;
             const isSharingScreen = mid === this._getDesktopTrackMid();
@@ -2822,14 +2814,13 @@ TraceablePeerConnection.prototype._updateVideoSenderEncodings = function(frameHe
             // encodings.
             browser.isFirefox() && (parameters.encodings[encoding].degradationPreference = preference);
 
-            // Configure scale factor when there is a single outbound-rtp stream.
-            if (scaleFactor) {
-                parameters.encodings[encoding].scaleResolutionDownBy = scaleFactor;
-            }
+            parameters.encodings[encoding].scaleResolutionDownBy = scaleFactor[encoding];
 
             // Configure scalability mode when its supported and enabled.
             if (scalabilityModes) {
                 parameters.encodings[encoding].scalabilityMode = scalabilityModes[encoding];
+            } else {
+                parameters.encodings[encoding].scalabilityMode = undefined;
             }
         }
     }

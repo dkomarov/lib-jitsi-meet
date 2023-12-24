@@ -2,7 +2,6 @@ import { getLogger } from '@jitsi/logger';
 
 import rtcstatsInit from '@jitsi/rtcstats/rtcstats';
 import traceInit from '@jitsi/rtcstats/trace-ws';
-import EventEmitter from 'events';
 
 import {
     CONFERENCE_JOINED,
@@ -12,22 +11,9 @@ import {
 import JitsiConference from '../../JitsiConference';
 import { IRTCStatsConfiguration } from './interfaces';
 import { RTC_STATS_PC_EVENT, RTC_STATS_WC_DISCONNECTED } from './RTCStatsEvents';
+import EventEmitter from '../util/EventEmitter';
 
 const logger = getLogger(__filename);
-
-/**
- * Filter out RTCPeerConnection that are created by callstats.io.
- *
- * @param {*} config - Config object sent to the PC c'tor.
- * @returns {boolean}
- */
-function connectionFilter(config) {
-    for(const iceUrl of (config?.iceServers ?? [])[0]?.urls ?? []) {
-        if (iceUrl.includes('callstats.io')) {
-            return true;
-        }
-    }
-}
 
 /**
  * RTCStats Singleton that is initialized only once for the lifetime of the app, subsequent calls to init will be ignored.
@@ -63,8 +49,7 @@ class RTCStats {
 
         rtcstatsInit(
             { statsEntry: this.sendStatsEntry.bind(this) },
-            { connectionFilter,
-              pollInterval,
+            { pollInterval,
               useLegacy,
               sendSdp,
               eventCallback: (event) => this.events.emit(RTC_STATS_PC_EVENT, event)}

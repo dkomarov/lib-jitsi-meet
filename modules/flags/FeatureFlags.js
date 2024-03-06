@@ -15,17 +15,8 @@ class FeatureFlags {
      */
     init(flags) {
         this._runInLiteMode = Boolean(flags.runInLiteMode);
-        this._ssrcRewriting = Boolean(flags.ssrcRewritingEnabled);
+        this._ssrcRewriting = flags.ssrcRewritingEnabled ?? true;
         this._joinAsVisitor = Boolean(flags.enableJoinAsVisitor ?? true);
-    }
-
-    /**
-     * Checks if multiple local video streams support is enabled.
-     *
-     * @returns {boolean}
-     */
-    isMultiStreamSendSupportEnabled() {
-        return browser.supportsUnifiedPlan();
     }
 
     /**

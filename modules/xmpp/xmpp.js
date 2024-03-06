@@ -239,20 +239,6 @@ export default class XMPP extends Listenable {
             this.caps.addFeature('http://jitsi.org/tcc');
         }
 
-        // this is dealt with by SDP O/A so we don't need to announce this
-        // XEP-0293
-        // this.caps.addFeature('urn:xmpp:jingle:apps:rtp:rtcp-fb:0');
-        // XEP-0294
-        // this.caps.addFeature('urn:xmpp:jingle:apps:rtp:rtp-hdrext:0');
-
-        // this.caps.addFeature('urn:ietf:rfc:5576'); // a=ssrc
-
-        // Enable Lipsync ?
-        if (browser.isChromiumBased() && this.options.enableLipSync === true) {
-            logger.info('Lip-sync enabled !');
-            this.caps.addFeature('http://jitsi.org/meet/lipsync');
-        }
-
         if (this.connection.rayo) {
             this.caps.addFeature('urn:xmpp:rayo:client:1');
         }
@@ -457,11 +443,6 @@ export default class XMPP extends Listenable {
                 this._components.push(this.speakerStatsComponentAddress);
             }
 
-            if (identity.type === 'conference_duration') {
-                this.conferenceDurationComponentAddress = identity.name;
-                this._components.push(this.conferenceDurationComponentAddress);
-            }
-
             if (identity.type === 'lobbyrooms') {
                 this.lobbySupported = true;
                 const processLobbyFeatures = f => {
@@ -544,6 +525,7 @@ export default class XMPP extends Listenable {
             return null;
         }
 
+        FAILURE_REGEX.lastIndex = 0;
         const matches = FAILURE_REGEX.exec(msg);
 
         return matches ? matches[1] : null;
@@ -1071,8 +1053,6 @@ export default class XMPP extends Listenable {
 
         if (parsedJson[JITSI_MEET_MUC_TYPE] === 'speakerstats' && parsedJson.users) {
             this.eventEmitter.emit(XMPPEvents.SPEAKER_STATS_RECEIVED, parsedJson.users);
-        } else if (parsedJson[JITSI_MEET_MUC_TYPE] === 'conference_duration' && parsedJson.created_timestamp) {
-            this.eventEmitter.emit(XMPPEvents.CONFERENCE_TIMESTAMP_RECEIVED, parsedJson.created_timestamp);
         } else if (parsedJson[JITSI_MEET_MUC_TYPE] === 'av_moderation') {
             this.eventEmitter.emit(XMPPEvents.AV_MODERATION_RECEIVED, parsedJson);
         } else if (parsedJson[JITSI_MEET_MUC_TYPE] === 'breakout_rooms') {

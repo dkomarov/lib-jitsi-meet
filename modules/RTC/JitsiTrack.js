@@ -261,11 +261,18 @@ export default class JitsiTrack extends EventEmitter {
      * @returns {Promise}
      */
     dispose() {
+        const p = Promise.resolve();
+
+        if (this.disposed) {
+            return p;
+        }
+
+        this.detach();
         this.removeAllListeners();
 
         this.disposed = true;
 
-        return Promise.resolve();
+        return p;
     }
 
     /**
@@ -274,17 +281,6 @@ export default class JitsiTrack extends EventEmitter {
      */
     getId() {
         return this.getStreamId();
-    }
-
-    /**
-     * Returns the msid of the stream attached to the JitsiTrack object or null
-     * if no stream is attached.
-     */
-    getMSID() {
-        const streamId = this.getStreamId();
-        const trackId = this.getTrackId();
-
-        return streamId && trackId ? `${streamId} ${trackId}` : null;
     }
 
     /**

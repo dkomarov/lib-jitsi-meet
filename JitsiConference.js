@@ -40,6 +40,7 @@ import Statistics from "./modules/statistics/statistics";
 import EventEmitter from "./modules/util/EventEmitter";
 import { safeSubtract } from "./modules/util/MathUtil";
 import RandomUtil from "./modules/util/RandomUtil";
+import { getJitterDelay } from "./modules/util/Retry";
 import ComponentsVersions from "./modules/version/ComponentsVersions";
 import VideoSIPGW from "./modules/videosipgw/VideoSIPGW";
 import * as VideoSIPGWConstants from "./modules/videosipgw/VideoSIPGWConstants";
@@ -376,6 +377,11 @@ export default function JitsiConference(options) {
     this._firefoxP2pEnabled =
         browser.isVersionGreaterThan(109) &&
         (this.options.config.testing?.enableFirefoxP2p ?? true);
+
+    /**
+     * Number of times ICE restarts that have been attempted after ICE connectivity with the JVB was lost.
+     */
+    this._iceRestarts = 0;
 }
 
 // FIXME convert JitsiConference to ES6 - ASAP !
@@ -441,7 +447,6 @@ JitsiConference.prototype._init = function (options = {}) {
             preferredCodec: _getCodecMimeType(
                 config.videoQuality?.preferredCodec
             ),
-            supportsAv1: config.testing?.enableAv1Support,
         },
         p2p: {
             preferenceOrder:
@@ -489,7 +494,20 @@ JitsiConference.prototype._init = function (options = {}) {
         }
     );
 
-    // Connection interrupted/restored listeners
+    // ICE Connection interrupted/restored listeners.
+    this._onIceConnectionEstablished =
+        this._onIceConnectionEstablished.bind(this);
+    this.room.addListener(
+        XMPPEvents.CONNECTION_ESTABLISHED,
+        this._onIceConnectionEstablished
+    );
+
+    this._onIceConnectionFailed = this._onIceConnectionFailed.bind(this);
+    this.room.addListener(
+        XMPPEvents.CONNECTION_ICE_FAILED,
+        this._onIceConnectionFailed
+    );
+
     this._onIceConnectionInterrupted =
         this._onIceConnectionInterrupted.bind(this);
     this.room.addListener(
@@ -501,13 +519,6 @@ JitsiConference.prototype._init = function (options = {}) {
     this.room.addListener(
         XMPPEvents.CONNECTION_RESTORED,
         this._onIceConnectionRestored
-    );
-
-    this._onIceConnectionEstablished =
-        this._onIceConnectionEstablished.bind(this);
-    this.room.addListener(
-        XMPPEvents.CONNECTION_ESTABLISHED,
-        this._onIceConnectionEstablished
     );
 
     this._updateProperties = this._updateProperties.bind(this);
@@ -569,7 +580,6 @@ JitsiConference.prototype._init = function (options = {}) {
             confID:
                 config.confID ||
                 `${this.connection.options.hosts.domain}/${this.options.name}`,
-            siteID: config.siteID,
             roomName: this.options.name,
             applicationName: config.applicationName,
         });
@@ -1618,11 +1628,6 @@ JitsiConference.prototype._setupNewTrack = function (newTrack) {
     this.rtc.addLocalTrack(newTrack);
     newTrack.setConference(this);
 
-    // Suspend media on the inactive media session since it gets automatically enabled for a newly added source.
-    if (this.isP2PActive()) {
-        this._suspendMediaTransferForJvbConnection();
-    }
-
     // Add event handlers.
     newTrack.muteHandler = this._fireMuteChangeEvent.bind(this, newTrack);
     newTrack.addEventListener(
@@ -2176,12 +2181,12 @@ JitsiConference.prototype.onMemberLeft = function (jid, reason) {
     }
 
     tracksToBeRemoved.forEach((track) => {
+        // Fire the event before renegotiation is done so that the thumbnails can be removed immediately.
+        this.eventEmitter.emit(JitsiConferenceEvents.TRACK_REMOVED, track);
+
         if (FeatureFlags.isSsrcRewritingSupported()) {
             track.setSourceName(null);
             track.setOwner(null);
-        } else {
-            // Fire the event before renegotiation is done so that the thumbnails can be removed immediately.
-            this.eventEmitter.emit(JitsiConferenceEvents.TRACK_REMOVED, track);
         }
     });
 
@@ -3251,8 +3256,18 @@ JitsiConference.prototype._onIceConnectionFailed = function (session) {
             reasonDescription: "ICE FAILED",
         });
     } else if (session && this.jvbJingleSession === session) {
+        // Use an exponential backoff timer for ICE restarts.
+        const jitterDelay = getJitterDelay(
+            this._iceRestarts,
+            1000 /* min. delay */
+        );
+
         this._delayedIceFailed = new IceFailedHandling(this);
-        this._delayedIceFailed.start(session);
+        setTimeout(() => {
+            logger.error(`triggering ice restart after ${jitterDelay} `);
+            this._delayedIceFailed.start(session);
+            this._iceRestarts++;
+        }, jitterDelay);
     }
 };
 
@@ -3354,12 +3369,7 @@ JitsiConference.prototype._addRemoteP2PTracks = function () {
  */
 JitsiConference.prototype._addRemoteTracks = function (logName, remoteTracks) {
     for (const track of remoteTracks) {
-        // There will be orphan (with no owner) tracks when ssrc-rewriting is enabled and all of them need to be addded
-        // back to the conference.
-        if (
-            FeatureFlags.isSsrcRewritingSupported() ||
-            this.participants.has(track.ownerEndpointId)
-        ) {
+        if (this.participants.has(track.ownerEndpointId)) {
             logger.info(`Adding remote ${logName} track: ${track}`);
             this.onRemoteTrackAdded(track);
         }
@@ -3506,6 +3516,26 @@ JitsiConference.prototype._updateProperties = function (properties = {}) {
                 });
             }
         });
+
+        // Handle changes to aggregate list of visitor codecs.
+        let publishedCodecs = this.properties["visitor-codecs"]?.split(",");
+
+        if (publishedCodecs?.length) {
+            publishedCodecs = publishedCodecs.filter(
+                (codec) =>
+                    typeof codec === "string" &&
+                    codec.trim().length &&
+                    Object.values(CodecMimeType).find((val) => val === codec)
+            );
+        }
+
+        if (this._visitorCodecs !== publishedCodecs) {
+            this._visitorCodecs = publishedCodecs;
+            this.eventEmitter.emit(
+                JitsiConferenceEvents.CONFERENCE_VISITOR_CODECS_CHANGED,
+                this._visitorCodecs
+            );
+        }
 
         const oldValue = this._hasVisitors;
 

@@ -9,9 +9,9 @@ import browser from '../browser';
 const logger = getLogger(__filename);
 
 // Default video codec preferences on mobile and desktop endpoints.
-const DESKTOP_VIDEO_CODEC_ORDER = [ CodecMimeType.VP9, CodecMimeType.VP8, CodecMimeType.H264 ];
-const MOBILE_P2P_VIDEO_CODEC_ORDER = [ CodecMimeType.H264, CodecMimeType.VP8, CodecMimeType.VP9 ];
-const MOBILE_VIDEO_CODEC_ORDER = [ CodecMimeType.VP8, CodecMimeType.VP9, CodecMimeType.H264 ];
+const DESKTOP_VIDEO_CODEC_ORDER = [ CodecMimeType.VP9, CodecMimeType.VP8, CodecMimeType.H264, CodecMimeType.AV1 ];
+const MOBILE_P2P_VIDEO_CODEC_ORDER = [ CodecMimeType.H264, CodecMimeType.VP8, CodecMimeType.VP9, CodecMimeType.AV1 ];
+const MOBILE_VIDEO_CODEC_ORDER = [ CodecMimeType.VP8, CodecMimeType.VP9, CodecMimeType.H264, CodecMimeType.AV1 ];
 
 /**
  * This class handles the codec selection mechanism for the conference based on the config.js settings.
@@ -33,6 +33,7 @@ export class CodecSelection {
         this.conference = conference;
         this.options = options;
         this.codecPreferenceOrder = {};
+        this.visitorCodecs = [];
 
         for (const connectionType of Object.keys(options)) {
             // eslint-disable-next-line prefer-const
@@ -94,6 +95,9 @@ export class CodecSelection {
             JitsiConferenceEvents._MEDIA_SESSION_STARTED,
             session => this._selectPreferredCodec(session));
         this.conference.on(
+            JitsiConferenceEvents.CONFERENCE_VISITOR_CODECS_CHANGED,
+            codecList => this._updateVisitorCodecs(codecList));
+        this.conference.on(
             JitsiConferenceEvents.USER_JOINED,
             () => this._selectPreferredCodec());
         this.conference.on(
@@ -111,10 +115,6 @@ export class CodecSelection {
         const videoCodecMimeTypes = browser.isMobileDevice() && connectionType === 'p2p'
             ? MOBILE_P2P_VIDEO_CODEC_ORDER
             : browser.isMobileDevice() ? MOBILE_VIDEO_CODEC_ORDER : DESKTOP_VIDEO_CODEC_ORDER;
-
-        if (connectionType === 'p2p' || this.options.jvb.supportsAv1) {
-            videoCodecMimeTypes.push(CodecMimeType.AV1);
-        }
 
         const supportedCodecs = videoCodecMimeTypes.filter(codec =>
             (window.RTCRtpReceiver?.getCapabilities?.(MediaType.VIDEO)?.codecs ?? [])
@@ -162,6 +162,9 @@ export class CodecSelection {
             return [];
         });
 
+        // Include the visitor codecs.
+        this.visitorCodecs.length && remoteCodecsPerParticipant.push(this.visitorCodecs);
+
         const selectedCodecOrder = localPreferredCodecOrder.reduce((acc, localCodec) => {
             let codecNotSupportedByRemote = false;
 
@@ -196,6 +199,21 @@ export class CodecSelection {
         if (!selectedCodecOrder.every((val, index) => val === currentCodecOrder[index])) {
             session.setVideoCodecs(selectedCodecOrder);
         }
+    }
+
+    /**
+     * Updates the aggregate list of the codecs supported by all the visitors in the call and calculates the
+     * selected codec if needed.
+     * @param {Array} codecList - visitor codecs.
+     * @returns {void}
+     */
+    _updateVisitorCodecs(codecList) {
+        if (this.visitorCodecs === codecList) {
+            return;
+        }
+
+        this.visitorCodecs = codecList;
+        this._selectPreferredCodec();
     }
 
     /**

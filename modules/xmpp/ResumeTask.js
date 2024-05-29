@@ -47,6 +47,7 @@ export default class ResumeTask {
      */
     schedule() {
         this._cancelResume();
+        this._removeNetworkOnlineListener();
 
         this._resumeRetryN += 1;
 
@@ -107,6 +108,19 @@ export default class ResumeTask {
     }
 
     /**
+     * Removes network online listener for the NETWORK_INFO_EVENT event.
+     *
+     * @private
+     * @returns {void}
+     */
+    _removeNetworkOnlineListener() {
+        if (this._networkOnlineListener) {
+            this._networkOnlineListener();
+            this._networkOnlineListener = null;
+        }
+    }
+
+    /**
      * Resumes the XMPP connection using the stream management plugin.
      *
      * @private
@@ -141,7 +155,11 @@ export default class ResumeTask {
 
         this._stropheConn.service = url.toString();
 
-        streamManagement.resume();
+        try {
+            streamManagement.resume();
+        } catch (e) {
+            logger.error('Failed to resume XMPP connnection', e);
+        }
     }
 
     /**
@@ -152,10 +170,7 @@ export default class ResumeTask {
      */
     cancel() {
         this._cancelResume();
+        this._removeNetworkOnlineListener();
         this._resumeRetryN = 0;
-        if (this._networkOnlineListener) {
-            this._networkOnlineListener();
-            this._networkOnlineListener = null;
-        }
     }
 }

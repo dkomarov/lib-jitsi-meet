@@ -518,14 +518,6 @@ export default class JitsiLocalTrack extends JitsiTrack {
      */
     _setStream(stream) {
         super._setStream(stream);
-
-        if (stream) {
-            // Store the MSID for video mute/unmute purposes.
-            this.storedMSID = this.getMSID();
-            logger.debug(`Setting new MSID: ${this.storedMSID} on ${this}`);
-        } else {
-            logger.debug(`Setting 'null' stream on ${this}`);
-        }
     }
 
     /**
@@ -607,6 +599,9 @@ export default class JitsiLocalTrack extends JitsiTrack {
      * @returns {Promise}
      */
     async dispose() {
+        if (this.disposed) {
+            return;
+        }
 
         // Remove the effect instead of stopping it so that the original stream is restored
         // on both the local track and on the peerconnection.
@@ -620,7 +615,6 @@ export default class JitsiLocalTrack extends JitsiTrack {
 
         if (this.stream) {
             this.stopStream();
-            this.detach();
         }
 
         RTCUtils.removeListener(RTCEvents.DEVICE_LIST_WILL_CHANGE, this._onDeviceListWillChange);

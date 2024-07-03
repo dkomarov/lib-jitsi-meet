@@ -447,6 +447,9 @@ JitsiConference.prototype._init = function (options = {}) {
             preferredCodec: _getCodecMimeType(
                 config.videoQuality?.preferredCodec
             ),
+            screenshareCodec: browser.isMobileDevice()
+                ? _getCodecMimeType(config.videoQuality?.mobileScreenshareCodec)
+                : _getCodecMimeType(config.videoQuality?.screenshareCodec),
         },
         p2p: {
             preferenceOrder:
@@ -456,6 +459,9 @@ JitsiConference.prototype._init = function (options = {}) {
                     : config.p2p?.codecPreferenceOrder,
             disabledCodec: _getCodecMimeType(config.p2p?.disabledCodec),
             preferredCodec: _getCodecMimeType(config.p2p?.preferredCodec),
+            screenshareCodec: browser.isMobileDevice()
+                ? _getCodecMimeType(config.p2p?.mobileScreenshareCodec)
+                : _getCodecMimeType(config.p2p?.screenshareCodec),
         },
     };
 
@@ -1216,6 +1222,19 @@ JitsiConference.prototype.setDisplayName = function (name) {
             this.room.removeFromPresence(nickKey);
             this.room.sendPresence();
         }
+    }
+};
+
+/**
+ * Set join without audio
+ * @param silent whether user joined without audio
+ */
+JitsiConference.prototype.setIsSilent = function (silent) {
+    if (this.room) {
+        this.room.addOrReplaceInPresence("silent", {
+            attributes: { xmlns: "http://jitsi.org/protocol/silent" },
+            value: silent,
+        }) && this.room.sendPresence();
     }
 };
 
@@ -2307,6 +2326,22 @@ JitsiConference.prototype.onDisplayNameChanged = function (jid, displayName) {
     );
 };
 
+JitsiConference.prototype.onSilentStatusChanged = function (jid, isSilent) {
+    const id = Strophe.getResourceFromJid(jid);
+    const participant = this.getParticipantById(id);
+
+    if (!participant) {
+        return;
+    }
+
+    participant.setIsSilent(isSilent);
+    this.eventEmitter.emit(
+        JitsiConferenceEvents.SILENT_STATUS_CHANGED,
+        id,
+        isSilent
+    );
+};
+
 /**
  * Notifies this JitsiConference that a JitsiRemoteTrack was added to the conference.
  *
@@ -2542,6 +2577,8 @@ JitsiConference.prototype._acceptJvbIncomingCall = function (
             codecSettings: {
                 mediaType: MediaType.VIDEO,
                 codecList: this.codecSelection.getCodecPreferenceList("jvb"),
+                screenshareCodec:
+                    this.codecSelection.getScreenshareCodec("jvb"),
             },
             enableInsertableStreams:
                 this.isE2EEEnabled() || FeatureFlags.isRunInLiteModeEnabled(),
@@ -2609,7 +2646,7 @@ JitsiConference.prototype._acceptJvbIncomingCall = function (
 JitsiConference.prototype._setBridgeChannel = function (offerIq, pc) {
     const ignoreDomain = this.connection?.options?.bridgeChannel?.ignoreDomain;
     const preferSctp =
-        this.connection?.options?.bridgeChannel?.preferSctp ?? false;
+        this.connection?.options?.bridgeChannel?.preferSctp ?? true;
     const sctpOffered =
         $(offerIq).find('>content[name="data"]').first().length === 1;
     let wsUrl = null;
@@ -3314,6 +3351,8 @@ JitsiConference.prototype._acceptP2PIncomingCall = function (
             codecSettings: {
                 mediaType: MediaType.VIDEO,
                 codecList: this.codecSelection.getCodecPreferenceList("p2p"),
+                screenshareCodec:
+                    this.codecSelection.getScreenshareCodec("p2p"),
             },
             enableInsertableStreams:
                 this.isE2EEEnabled() || FeatureFlags.isRunInLiteModeEnabled(),
@@ -3717,6 +3756,8 @@ JitsiConference.prototype._startP2PSession = function (remoteJid) {
             codecSettings: {
                 mediaType: MediaType.VIDEO,
                 codecList: this.codecSelection.getCodecPreferenceList("p2p"),
+                screenshareCodec:
+                    this.codecSelection.getScreenshareCodec("p2p"),
             },
             enableInsertableStreams:
                 this.isE2EEEnabled() || FeatureFlags.isRunInLiteModeEnabled(),

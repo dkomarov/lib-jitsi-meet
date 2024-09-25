@@ -1,8 +1,9 @@
 import { safeJsonParse } from '@jitsi/js-utils/json';
 import { getLogger } from '@jitsi/logger';
 import $ from 'jquery';
-import isEqual from 'lodash.isequal';
+import { isEqual } from 'lodash-es';
 import { $iq, $msg, $pres, Strophe } from 'strophe.js';
+import { v4 as uuidv4 } from 'uuid';
 
 import { AUTH_ERROR_TYPES } from '../../JitsiConferenceErrors';
 import * as JitsiTranscriptionStatus from '../../JitsiTranscriptionStatus';
@@ -238,6 +239,9 @@ export default class ChatRoom extends Listenable {
             const preJoin
                 = this.options.disableFocus
                     ? Promise.resolve()
+                        .finally(() => {
+                            this.xmpp.connection._breakoutMovingToMain = undefined;
+                        })
                     : this.xmpp.moderator.sendConferenceRequest(this.roomjid);
 
             preJoin.then(() => {
@@ -248,7 +252,8 @@ export default class ChatRoom extends Listenable {
                         this.onConnStatusChanged.bind(this))
                 );
                 resolve();
-            });
+            })
+            .catch(e => logger.trace('PreJoin rejected', e));
         });
     }
 
@@ -961,6 +966,26 @@ export default class ChatRoom extends Listenable {
         this.eventEmitter.emit(XMPPEvents.SENDING_CHAT_MESSAGE, message);
     }
 
+    /**
+     * Sends a reaction message to the other participants in the conference.
+     * @param {string} reaction - The reaction being sent.
+     * @param {string} messageId - The id of the message being sent.
+     * @param {string} receiverId - The receiver of the message if it is private.
+     */
+    sendReaction(reaction, messageId, receiverId) {
+        // Adds the 'to' attribute depending on if the message is private or not.
+        const msg = receiverId ? $msg({ to: `${this.roomjid}/${receiverId}`,
+            type: 'chat' }) : $msg({ to: this.roomjid,
+            type: 'groupchat' });
+
+        msg.c('reactions', { id: messageId,
+            xmlns: 'urn:xmpp:reactions:0' })
+            .c('reaction', {}, reaction)
+            .up().c('store', { xmlns: 'urn:xmpp:hints' });
+
+        this.connection.send(msg);
+    }
+
     /* eslint-disable max-params */
     /**
      * Send private text message to another participant of the conference
@@ -1143,6 +1168,24 @@ export default class ChatRoom extends Listenable {
             return true;
         }
 
+        const reactions = $(msg).find('>[xmlns="urn:xmpp:reactions:0"]>reaction');
+
+        if (reactions.length > 0) {
+            const messageId = $(msg).find('>[xmlns="urn:xmpp:reactions:0"]').attr('id');
+            const reactionList = [];
+
+            reactions.each((_, reactionElem) => {
+                const reaction = $(reactionElem).text();
+
+                reactionList.push(reaction);
+            });
+
+            this.eventEmitter.emit(XMPPEvents.REACTION_RECEIVED, from, reactionList, messageId);
+
+            return true;
+        }
+
+
         const txt = $(msg).find('>body').text();
         const subject = $(msg).find('>subject');
 
@@ -1207,9 +1250,12 @@ export default class ChatRoom extends Listenable {
         }
 
         if (txt) {
+
+            const messageId = $(msg).attr('id') || uuidv4();
+
             if (type === 'chat') {
                 this.eventEmitter.emit(XMPPEvents.PRIVATE_MESSAGE_RECEIVED,
-                        from, txt, this.myroomjid, stamp);
+                        from, txt, this.myroomjid, stamp, messageId);
             } else if (type === 'groupchat') {
                 const nickEl = $(msg).find('>nick');
                 let nick;
@@ -1222,7 +1268,7 @@ export default class ChatRoom extends Listenable {
                 // informing that this is probably a message from a guest to the conference (visitor)
                 // a message with explicit name set
                 this.eventEmitter.emit(XMPPEvents.MESSAGE_RECEIVED,
-                    from, txt, this.myroomjid, stamp, nick, Boolean(nick));
+                    from, txt, this.myroomjid, stamp, nick, Boolean(nick), messageId);
             }
         }
     }

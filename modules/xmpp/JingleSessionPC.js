@@ -6,11 +6,14 @@ import { JitsiTrackEvents } from '../../JitsiTrackEvents';
 import { CodecMimeType } from '../../service/RTC/CodecMimeType';
 import { MediaDirection } from '../../service/RTC/MediaDirection';
 import { MediaType } from '../../service/RTC/MediaType';
+import { VideoType } from '../../service/RTC/VideoType';
 import {
     ICE_DURATION,
-    ICE_STATE_CHANGED
+    ICE_STATE_CHANGED,
+    VIDEO_CODEC_CHANGED
 } from '../../service/statistics/AnalyticsEvents';
 import { XMPPEvents } from '../../service/xmpp/XMPPEvents';
+import { XEP } from '../../service/xmpp/XMPPExtensioProtocols';
 import { SS_DEFAULT_FRAME_RATE } from '../RTC/ScreenObtainer';
 import FeatureFlags from '../flags/FeatureFlags';
 import SDP from '../sdp/SDP';
@@ -66,7 +69,7 @@ function getEndpointId(jidOrEndpointId) {
 function _addSourceElement(description, s, ssrc_, msid) {
 
     description.c('source', {
-        xmlns: 'urn:xmpp:jingle:apps:rtp:ssma:0',
+        xmlns: XEP.SOURCE_ATTRIBUTES,
         ssrc: ssrc_,
         name: s.source
     })
@@ -536,6 +539,7 @@ export default class JingleSessionPC extends JingleSession {
                 this._iceCheckingStartedTimestamp = now;
                 break;
             case 'connected':
+            case 'completed':
                 // Informs interested parties that the connection has been restored. This includes the case when
                 // media connection to the bridge has been restored after an ICE failure by using session-terminate.
                 if (this.peerconnection.signalingState === 'stable') {
@@ -710,7 +714,7 @@ export default class JingleSessionPC extends JingleSession {
 
                 return;
             }
-            ice.xmlns = 'urn:xmpp:jingle:transports:ice-udp:1';
+            ice.xmlns = XEP.ICE_UDP_TRANSPORT;
 
             if (this.usedrip) {
                 if (this.dripContainer.length === 0) {
@@ -765,7 +769,7 @@ export default class JingleSessionPC extends JingleSession {
                 const ice
                     = SDPUtil.iceparams(localSDP.media[mid], localSDP.session);
 
-                ice.xmlns = 'urn:xmpp:jingle:transports:ice-udp:1';
+                ice.xmlns = XEP.ICE_UDP_TRANSPORT;
                 cand.c('content', {
                     creator: this.initiatorJid === this.localJid
                         ? 'initiator' : 'responder',
@@ -1177,13 +1181,13 @@ export default class JingleSessionPC extends JingleSession {
      * Updates the codecs on the peerconnection and initiates a renegotiation for the
      * new codec config to take effect.
      *
-     * @param {Array<CodecMimeType>} codecList the preferred codecs.
+     * @param {Array<CodecMimeType>} codecList - Preferred codecs for video.
+     * @param {CodecMimeType} screenshareCodec - The preferred screenshare codec.
      */
-    setVideoCodecs(codecList) {
-
+    setVideoCodecs(codecList, screenshareCodec) {
         if (this._assertNotEnded()) {
-            logger.info(`${this} setVideoCodecs: ${codecList}`);
-            this.peerconnection.setVideoCodecs(codecList);
+            logger.info(`${this} setVideoCodecs: codecList=${codecList}, screenshareCodec=${screenshareCodec}`);
+            this.peerconnection.setVideoCodecs(codecList, screenshareCodec);
 
             // Browser throws an error when H.264 is set on the encodings. Therefore, munge the SDP when H.264 needs to
             // be selected.
@@ -1198,6 +1202,13 @@ export default class JingleSessionPC extends JingleSession {
             if (codecList.every((val, index) => val === currentCodecOrder[index])) {
                 return;
             }
+
+            Statistics.sendAnalytics(
+                VIDEO_CODEC_CHANGED,
+                {
+                    value: codecList[0],
+                    videoType: VideoType.CAMERA
+                });
 
             // Initiate a renegotiate for the codec setting to take effect.
             const workFunction = finishedCallback => {
@@ -1824,7 +1835,7 @@ export default class JingleSessionPC extends JingleSession {
                 xmlns: 'urn:xmpp:jingle:1',
                 name: mediaType
             }).c('description', {
-                xmlns: 'urn:xmpp:jingle:apps:rtp:1',
+                xmlns: XEP.RTP_MEDIA,
                 media: mediaType
             });
 
@@ -1840,16 +1851,16 @@ export default class JingleSessionPC extends JingleSession {
                     if (rtx !== '-1') {
                         _addSourceElement(node, src, rtx, msid);
                         node.c('ssrc-group', {
-                            xmlns: 'urn:xmpp:jingle:apps:rtp:ssma:0',
+                            xmlns: XEP.SOURCE_ATTRIBUTES,
                             semantics: 'FID'
                         })
                             .c('source', {
-                                xmlns: 'urn:xmpp:jingle:apps:rtp:ssma:0',
+                                xmlns: XEP.SOURCE_ATTRIBUTES,
                                 ssrc
                             })
                             .up()
                             .c('source', {
-                                xmlns: 'urn:xmpp:jingle:apps:rtp:ssma:0',
+                                xmlns: XEP.SOURCE_ATTRIBUTES,
                                 ssrc: rtx
                             })
                             .up()

@@ -553,6 +553,13 @@ export default class JingleSessionPC extends JingleSession {
 
             for (const description of descriptionsWithSources) {
                 const mediaType = $(description).attr('media');
+
+                if (mediaType === MediaType.AUDIO && this.options.startSilent) {
+
+                    // eslint-disable-next-line no-continue
+                    continue;
+                }
+
                 const sources = $(description).find('>source');
                 const removeSsrcs = [];
 
@@ -562,7 +569,12 @@ export default class JingleSessionPC extends JingleSession {
                     const msid = $(source)
                         .find('>parameter[name="msid"]')
                         .attr('value');
-                    const videoType = $(source).attr('videoType');
+                    let videoType = $(source).attr('videoType');
+
+                    // If the videoType is DESKTOP_HIGH_FPS for remote tracks, we should treat it as DESKTOP.
+                    if (videoType === VideoType.DESKTOP_HIGH_FPS) {
+                        videoType = VideoType.DESKTOP;
+                    }
 
                     if (sourceDescription.has(sourceName)) {
                         sourceDescription.get(sourceName).ssrcList?.push(ssrc);
@@ -1215,7 +1227,7 @@ export default class JingleSessionPC extends JingleSession {
      * @returns {void}
      */
     doInitialize(options) {
-        this.failICE = Boolean(options.failICE);
+        this.failICE = Boolean(options.testing?.failICE);
         this.lasticecandidate = false;
         this.options = options;
 
@@ -1455,6 +1467,9 @@ export default class JingleSessionPC extends JingleSession {
          */
         this.peerconnection.onconnectionstatechange = () => {
             const icestate = this.peerconnection.iceConnectionState;
+
+            logger.log(`(TIME) ${this.isP2P ? 'P2P' : 'JVB'} PC state is now ${this.peerconnection.connectionState} `
+                + `(ICE state ${this.peerconnection.iceConnectionState}):\t`, window.performance.now());
 
             switch (this.peerconnection.connectionState) {
             case 'failed':
@@ -1830,6 +1845,12 @@ export default class JingleSessionPC extends JingleSession {
         if (!FeatureFlags.isSsrcRewritingSupported()) {
             return;
         }
+
+        if (mediaType === MediaType.AUDIO && this.options.startSilent) {
+
+            return;
+        }
+
         const newSsrcs = [];
 
         for (const src of message.mappedSources) {
@@ -2265,7 +2286,6 @@ export default class JingleSessionPC extends JingleSession {
      */
     setVideoCodecs(codecList, screenshareCodec) {
         if (this._assertNotEnded()) {
-            logger.info(`${this} setVideoCodecs: codecList=${codecList}, screenshareCodec=${screenshareCodec}`);
             this.peerconnection.setVideoCodecs(codecList, screenshareCodec);
 
             // Browser throws an error when H.264 is set on the encodings. Therefore, munge the SDP when H.264 needs to
@@ -2288,6 +2308,8 @@ export default class JingleSessionPC extends JingleSession {
                     value: codecList[0],
                     videoType: VideoType.CAMERA
                 });
+
+            logger.info(`${this} setVideoCodecs: codecList=${codecList}, screenshareCodec=${screenshareCodec}`);
 
             // Initiate a renegotiate for the codec setting to take effect.
             const workFunction = finishedCallback => {

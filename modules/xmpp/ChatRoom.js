@@ -605,6 +605,10 @@ export default class ChatRoom extends Listenable {
                 member.features = this._extractFeatures(node);
                 break;
             }
+            case 'jitsi_participant_region': {
+                member.region = node.value;
+                break;
+            }
             case 'stat': {
                 const { attributes } = node;
 
@@ -650,6 +654,10 @@ export default class ChatRoom extends Listenable {
                 // set correct initial state of locked
                 if (this.password) {
                     this.locked = true;
+                }
+
+                if (member.region && this.options?.deploymentInfo) {
+                    this.options.deploymentInfo.userRegion = member.region;
                 }
 
                 // Re-send presence in case any presence updates were added,
@@ -1014,10 +1022,17 @@ export default class ChatRoom extends Listenable {
      * @param subject
      */
     setSubject(subject) {
+        const valueToProcess = subject ? subject.trim() : subject;
+
+        if (valueToProcess === this.subject) {
+            // subject already set to the new value
+            return;
+        }
+
         const msg = $msg({ to: this.roomjid,
             type: 'groupchat' });
 
-        msg.c('subject', subject);
+        msg.c('subject', valueToProcess);
         this.connection.send(msg);
     }
 
@@ -1201,6 +1216,7 @@ export default class ChatRoom extends Listenable {
             const subjectText = subject.text();
 
             if (subjectText || subjectText === '') {
+                this.subject = subjectText.trim();
                 this.eventEmitter.emit(XMPPEvents.SUBJECT_CHANGED, subjectText);
                 logger.log(`Subject is changed to ${subjectText}`);
             }

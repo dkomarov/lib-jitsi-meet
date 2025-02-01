@@ -45,14 +45,13 @@ const ScreenObtainer = {
      * @private
      */
     _createObtainStreamMethod() {
-        if (browser.isElectron()) {
+        const supportsGetDisplayMedia = browser.supportsGetDisplayMedia();
+
+        if (browser.isElectron() && !this.options.testing?.electronUseGetDisplayMedia) {
             return this.obtainScreenOnElectron;
-        } else if (
-            browser.isReactNative() &&
-            browser.supportsGetDisplayMedia()
-        ) {
+        } else if (browser.isReactNative() && supportsGetDisplayMedia) {
             return this.obtainScreenFromGetDisplayMediaRN;
-        } else if (browser.supportsGetDisplayMedia()) {
+        } else if (supportsGetDisplayMedia) {
             return this.obtainScreenFromGetDisplayMedia;
         }
         logger.log("Screen sharing not supported on ", browser.getName());
@@ -333,9 +332,9 @@ const ScreenObtainer = {
             })
             .catch((error) => {
                 const errorDetails = {
-                    errorName: error && error.name,
-                    errorMsg: error && error.message,
-                    errorStack: error && error.stack,
+                    errorName: error?.name,
+                    errorMsg: error?.message,
+                    errorStack: error?.stack
                 };
 
                 logger.error(
@@ -344,15 +343,19 @@ const ScreenObtainer = {
                     JSON.stringify(errorDetails)
                 );
 
-                if (
-                    errorDetails.errorMsg &&
-                    errorDetails.errorMsg.indexOf("denied by system") !== -1
-                ) {
+                if (errorDetails.errorMsg?.indexOf('denied by system') !== -1) {
                     // On Chrome this is the only thing different between error returned when user cancels
                     // and when no permission was given on the OS level.
                     errorCallback(
                         new JitsiTrackError(JitsiTrackErrors.PERMISSION_DENIED)
                     );
+
+                    return;
+                } else if (errorDetails.errorMsg === 'NotReadableError') {
+                    // This can happen under some weird conditions:
+                    //  - https://issues.chromium.org/issues/369103607
+                    //  - https://issues.chromium.org/issues/353555347
+                    errorCallback(new JitsiTrackError(JitsiTrackErrors.SCREENSHARING_GENERIC_ERROR));
 
                     return;
                 }

@@ -3,6 +3,7 @@
  */
 
 export enum JitsiTrackErrors {
+
     /**
      * An error which indicates that some of requested constraints in
      * getUserMedia call were not satisfied.
@@ -43,6 +44,12 @@ export enum JitsiTrackErrors {
     SCREENSHARING_GENERIC_ERROR = 'gum.screensharing_generic_error',
 
     /**
+     * Error in getDisplayMedia when not supported. Can happen in Electron if no
+     * permission handler was set.
+     */
+    SCREENSHARING_NOT_SUPPORTED_ERROR = 'gdm.screen_sharing_not_supported',
+
+    /**
      * An error which indicates that user canceled screen sharing window
      * selection dialog.
      */
@@ -65,10 +72,9 @@ export enum JitsiTrackErrors {
     TRACK_NO_STREAM_FOUND = 'track.no_stream_found',
 
     /**
-     * An error which indicates that requested video resolution is not supported
-     * by a webcam.
+     * An error which indicates that no tracks were found in the media stream
      */
-    UNSUPPORTED_RESOLUTION = 'gum.unsupported_resolution',
+    TRACK_NO_STREAM_TRACKS_FOUND = 'track.no_stream_tracks_found',
 
     /**
      * An error which indicates that there are too many tracks in the provided media stream
@@ -76,9 +82,10 @@ export enum JitsiTrackErrors {
     TRACK_TOO_MANY_TRACKS_IN_STREAM = 'track.too_many_tracks_in_stream',
 
     /**
-     * An error which indicates that no tracks were found in the media stream
+     * An error which indicates that requested video resolution is not supported
+     * by a webcam.
      */
-    TRACK_NO_STREAM_TRACKS_FOUND = 'track.no_stream_tracks_found',
+    UNSUPPORTED_RESOLUTION = 'gum.unsupported_resolution'
 }
 
 // exported for backward compatibility
@@ -89,6 +96,7 @@ export const GENERAL = JitsiTrackErrors.GENERAL;
 export const NOT_FOUND = JitsiTrackErrors.NOT_FOUND;
 export const PERMISSION_DENIED = JitsiTrackErrors.PERMISSION_DENIED;
 export const SCREENSHARING_GENERIC_ERROR = JitsiTrackErrors.SCREENSHARING_GENERIC_ERROR;
+export const SCREENSHARING_NOT_SUPPORTED_ERROR = JitsiTrackErrors.SCREENSHARING_NOT_SUPPORTED_ERROR;
 export const SCREENSHARING_USER_CANCELED = JitsiTrackErrors.SCREENSHARING_USER_CANCELED;
 export const TIMEOUT = JitsiTrackErrors.TIMEOUT;
 export const TRACK_IS_DISPOSED = JitsiTrackErrors.TRACK_IS_DISPOSED;

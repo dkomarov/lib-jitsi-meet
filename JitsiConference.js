@@ -57,11 +57,13 @@ import {
     getSourceNameForJitsiTrack,
 } from "./service/RTC/SignalingLayer";
 import { VideoType } from "./service/RTC/VideoType";
+import { MAX_CONNECTION_RETRIES } from "./service/connectivity/Constants";
 import {
     ACTION_JINGLE_RESTART,
     ACTION_JINGLE_SI_RECEIVED,
     ACTION_JINGLE_SI_TIMEOUT,
     ACTION_JINGLE_TERMINATE,
+    ACTION_JVB_ICE_FAILED,
     ACTION_P2P_DECLINED,
     ACTION_P2P_ESTABLISHED,
     ACTION_P2P_FAILED,
@@ -69,12 +71,10 @@ import {
     ICE_ESTABLISHMENT_DURATION_DIFF,
     createConferenceEvent,
     createJingleEvent,
+    createJvbIceFailedEvent,
     createP2PEvent,
 } from "./service/statistics/AnalyticsEvents";
 import { XMPPEvents } from "./service/xmpp/XMPPEvents";
-
-// const testSvr = "whiteboard.hopto.org";
-// const prodSvr = "sidespeak.webhop.me";
 
 const logger = getLogger(__filename);
 // const wss = new WebSocket(
@@ -116,7 +116,7 @@ const JINGLE_SI_TIMEOUT = 5000;
 /**
  * Default source language for transcribing the local participant.
  */
-const DEFAULT_TRANSCRIPTION_LANGUAGE = 'en-US';
+const DEFAULT_TRANSCRIPTION_LANGUAGE = "en-US";
 
 /**
  * Checks if a given string is a valid video codec mime type.
@@ -702,7 +702,8 @@ JitsiConference.prototype._init = function (options = {}) {
     // In case the language config is undefined or has the default value that the transcriber uses
     // (in our case Jigasi uses 'en-US'), don't set the participant property in order to avoid
     // needlessly polluting the presence stanza.
-    const transcriptionLanguage = config?.transcriptionLanguage ?? DEFAULT_TRANSCRIPTION_LANGUAGE;
+    const transcriptionLanguage =
+        config?.transcriptionLanguage ?? DEFAULT_TRANSCRIPTION_LANGUAGE;
 
     if (transcriptionLanguage !== DEFAULT_TRANSCRIPTION_LANGUAGE) {
         this.setTranscriptionLanguage(transcriptionLanguage);
@@ -1291,8 +1292,11 @@ JitsiConference.prototype.addTrack = function (track) {
         // Currently, only adding multiple video streams of different video types is supported.
         // TODO - remove this limitation once issues with jitsi-meet trying to add multiple camera streams is fixed.
         if (
-            mediaType === MediaType.VIDEO &&
-            !localTracks.find((t) => t.getVideoType() === track.getVideoType())
+            this.options.config.testing?.allowMultipleTracks ||
+            (mediaType === MediaType.VIDEO &&
+                !localTracks.find(
+                    (t) => t.getVideoType() === track.getVideoType()
+                ))
         ) {
             const sourceName = getSourceNameForJitsiTrack(
                 this.myUserId(),
@@ -1310,7 +1314,8 @@ JitsiConference.prototype.addTrack = function (track) {
 
             return Promise.all(addTrackPromises).then(() => {
                 this._setupNewTrack(track);
-                this._sendBridgeVideoTypeMessage(track);
+                mediaType === MediaType.VIDEO &&
+                    this._sendBridgeVideoTypeMessage(track);
                 this._updateRoomPresence(this.getActiveMediaSession());
 
                 if (this.isMutedByFocus || this.isVideoMutedByFocus) {
@@ -3074,8 +3079,8 @@ JitsiConference.prototype.removeLocalParticipantProperty = function (name) {
  *
  * @param lang the new transcription language to be used.
  */
-JitsiConference.prototype.setTranscriptionLanguage = function(lang) {
-    this.setLocalParticipantProperty('transcription_language', lang);
+JitsiConference.prototype.setTranscriptionLanguage = function (lang) {
+    this.setLocalParticipantProperty("transcription_language", lang);
 };
 
 /**
@@ -3316,7 +3321,11 @@ JitsiConference.prototype._onIceConnectionFailed = function (session) {
             reason: "connectivity-error",
             reasonDescription: "ICE FAILED",
         });
-    } else if (session && this.jvbJingleSession === session) {
+    } else if (
+        session &&
+        this.jvbJingleSession === session &&
+        this._iceRestarts < MAX_CONNECTION_RETRIES
+    ) {
         // Use an exponential backoff timer for ICE restarts.
         const jitterDelay = getJitterDelay(
             this._iceRestarts,
@@ -3329,6 +3338,20 @@ JitsiConference.prototype._onIceConnectionFailed = function (session) {
             this._delayedIceFailed.start(session);
             this._iceRestarts++;
         }, jitterDelay);
+    } else if (this.jvbJingleSession === session) {
+        logger.warn(
+            "ICE failed, force reloading the conference after failed attempts to re-establish ICE"
+        );
+        Statistics.sendAnalyticsAndLog(
+            createJvbIceFailedEvent(ACTION_JVB_ICE_FAILED, {
+                participantId: this.myUserId(),
+                userRegion: this.options.config.deploymentInfo?.userRegion,
+            })
+        );
+        this.eventEmitter.emit(
+            JitsiConferenceEvents.CONFERENCE_FAILED,
+            JitsiConferenceErrors.ICE_FAILED
+        );
     }
 };
 
@@ -3863,28 +3886,37 @@ JitsiConference.prototype._maybeStartOrStopP2P = function (userLeftEvent) {
             logger.debug(`Forcing P2P initiator, will start P2P with: ${jid}`);
             this._startP2PSession(jid);
         } else if (this.options.config.testing?.forceResponder) {
-            logger.debug(`Forcing P2P responder, will wait for the other peer ${jid} to start P2P`);
+            logger.debug(
+                `Forcing P2P responder, will wait for the other peer ${jid} to start P2P`
+            );
         } else {
             if (myId > peersId) {
-                logger.debug('I\'m the bigger peersId - the other peer should start P2P', myId, peersId);
+                logger.debug(
+                    "I'm the bigger peersId - the other peer should start P2P",
+                    myId,
+                    peersId
+                );
 
                 return;
             } else if (myId === peersId) {
-                logger.error('The same IDs ? ', myId, peersId);
+                logger.error("The same IDs ? ", myId, peersId);
 
                 return;
             }
 
             if (userLeftEvent) {
                 if (this.deferredStartP2PTask) {
-                    logger.error('Deferred start P2P task\'s been set already!');
+                    logger.error("Deferred start P2P task's been set already!");
 
                     return;
                 }
-                logger.info(`Will start P2P with: ${jid} after ${this.backToP2PDelay} seconds...`);
+                logger.info(
+                    `Will start P2P with: ${jid} after ${this.backToP2PDelay} seconds...`
+                );
                 this.deferredStartP2PTask = setTimeout(
                     this._startP2PSession.bind(this, jid),
-                    this.backToP2PDelay * 1000);
+                    this.backToP2PDelay * 1000
+                );
             } else {
                 logger.info(`Will start P2P with: ${jid}`);
                 this._startP2PSession(jid);

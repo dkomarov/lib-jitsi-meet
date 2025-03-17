@@ -1,5 +1,6 @@
 import { getLogger } from '@jitsi/logger';
 
+import JitsiConference from '../../JitsiConference';
 import * as JitsiConferenceErrors from '../../JitsiConferenceErrors';
 import * as JitsiConferenceEvents from '../../JitsiConferenceEvents';
 
@@ -14,11 +15,15 @@ const logger = getLogger(__filename);
  * 'enableForcedReload' option is set in config.js, the conference will be forcefully reloaded.
  */
 export default class IceFailedHandling {
+    private _conference: JitsiConference;
+    private _canceled: boolean = false;
+    private _iceFailedTimeout?: number;
+
     /**
      * Creates new {@code DelayedIceFailed} task.
      * @param {JitsiConference} conference
      */
-    constructor(conference) {
+    constructor(conference: JitsiConference) {
         this._conference = conference;
     }
 
@@ -28,7 +33,7 @@ export default class IceFailedHandling {
      * @private
      * @returns {void}
      */
-    _actOnIceFailed() {
+    _actOnIceFailed(): void {
         if (!this._conference.room) {
             return;
         }
@@ -47,7 +52,7 @@ export default class IceFailedHandling {
         }
 
         const jvbConnection = this._conference.jvbJingleSession;
-        const jvbConnIceState = jvbConnection && jvbConnection.getIceConnectionState();
+        const jvbConnIceState = jvbConnection?.getIceConnectionState();
 
         if (!jvbConnection) {
             logger.warn('Not sending ICE failed - no JVB connection');
@@ -66,8 +71,9 @@ export default class IceFailedHandling {
 
     /**
      * Starts the task.
+     * @returns {void}
      */
-    start() {
+    start(): void {
         //  Using xmpp.ping allows to handle both XMPP being disconnected and internet offline cases. The ping function
         // uses sendIQ2 method which is resilient to XMPP connection disconnected state and will patiently wait until it
         // gets reconnected.
@@ -93,8 +99,9 @@ export default class IceFailedHandling {
 
     /**
      * Cancels the task.
+     * @returns {void}
      */
-    cancel() {
+    cancel(): void {
         this._canceled = true;
         window.clearTimeout(this._iceFailedTimeout);
     }

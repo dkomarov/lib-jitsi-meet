@@ -21,7 +21,7 @@ import {
 } from './service/statistics/AnalyticsEvents';
 import { XMPPEvents } from './service/xmpp/XMPPEvents';
 
-const logger = getLogger(__filename);
+const logger = getLogger('JitsiConferenceEventManager');
 
 /**
  * Setups all event listeners related to conference
@@ -50,6 +50,8 @@ JitsiConferenceEventManager.prototype.setupChatRoomListeners = function() {
             conference.eventEmitter.emit(JitsiConferenceEvents.PARTCIPANT_FEATURES_CHANGED, participant);
         }
     });
+
+    this.chatRoomForwarder.forward(XMPPEvents.PERMISSIONS_RECEIVED, JitsiConferenceEvents.PERMISSIONS_RECEIVED);
 
     chatRoom.addListener(XMPPEvents.AUDIO_MUTED_BY_FOCUS,
         actor => {

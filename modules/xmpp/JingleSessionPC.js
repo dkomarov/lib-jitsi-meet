@@ -30,7 +30,7 @@ import * as JingleSessionState from './JingleSessionState';
 import MediaSessionEvents from './MediaSessionEvents';
 import XmppConnection from './XmppConnection';
 
-const logger = getLogger(__filename);
+const logger = getLogger('modules/xmpp/JingleSessionPC');
 
 /**
  * Constant tells how long we're going to wait for IQ response, before timeout
@@ -1250,7 +1250,9 @@ export default class JingleSessionPC extends JingleSession {
         pcOptions.codecSettings = options.codecSettings;
         pcOptions.enableInsertableStreams = options.enableInsertableStreams;
         pcOptions.usesCodecSelectionAPI = this.usesCodecSelectionAPI
-            = browser.supportsCodecSelectionAPI() && options.testing?.enableCodecSelectionAPI && !this.isP2P;
+            = browser.supportsCodecSelectionAPI()
+            && (options.testing?.enableCodecSelectionAPI ?? true)
+            && !this.isP2P;
 
         if (options.videoQuality) {
             const settings = Object.entries(options.videoQuality)
@@ -2282,7 +2284,11 @@ export default class JingleSessionPC extends JingleSession {
      */
     setVideoCodecs(codecList, screenshareCodec) {
         if (this._assertNotEnded()) {
-            this.peerconnection.setVideoCodecs(codecList, screenshareCodec);
+            const updated = this.peerconnection.setVideoCodecs(codecList, screenshareCodec);
+
+            if (updated) {
+                this.eventEmitter.emit(MediaSessionEvents.VIDEO_CODEC_CHANGED);
+            }
 
             // Browser throws an error when H.264 is set on the encodings. Therefore, munge the SDP when H.264 needs to
             // be selected.
@@ -2298,6 +2304,7 @@ export default class JingleSessionPC extends JingleSession {
                 return;
             }
 
+            this.eventEmitter.emit(MediaSessionEvents.VIDEO_CODEC_CHANGED);
             Statistics.sendAnalytics(
                 VIDEO_CODEC_CHANGED,
                 {

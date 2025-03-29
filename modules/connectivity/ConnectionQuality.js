@@ -9,7 +9,7 @@ const Resolutions = require('../../service/RTC/Resolutions');
 const { VideoType } = require('../../service/RTC/VideoType');
 const { XMPPEvents } = require('../../service/xmpp/XMPPEvents');
 
-const logger = getLogger(__filename);
+const logger = getLogger('modules/connectivity/ConnectionQuality');
 
 /**
  * The value to use for the "type" field for messages sent by ConnectionQuality
@@ -209,6 +209,11 @@ export default class ConnectionQuality {
                     this._maybeUpdateUnmuteTime();
                 }
             });
+
+        conference.on(ConferenceEvents.VIDEO_CODEC_CHANGED, this._resetVideoUnmuteTime.bind(this));
+
+        conference.on(ConferenceEvents._MEDIA_SESSION_ACTIVE_CHANGED, this._resetVideoUnmuteTime.bind(this));
+
         conference.rtc.on(
             RTCEvents.LOCAL_TRACK_MAX_ENABLED_RESOLUTION_CHANGED,
             track => {
@@ -228,6 +233,17 @@ export default class ConnectionQuality {
                     = Number((properties || {})['bridge-count']);
             }
         );
+    }
+
+    /**
+     * Resets the time video was unmuted and triggers a new ramp-up.
+     *
+     * @private
+     * @returns {void}
+     */
+    _resetVideoUnmuteTime() {
+        this._timeVideoUnmuted = -1;
+        this._maybeUpdateUnmuteTime();
     }
 
     /**
@@ -257,27 +273,8 @@ export default class ConnectionQuality {
         let packetLoss;
 
         // TODO: take into account packet loss for received streams
-
         if (this._localStats.packetLoss) {
             packetLoss = this._localStats.packetLoss.upload;
-
-            // Ugly Hack Alert (UHA):
-            // The packet loss for the upload direction is calculated based on
-            // incoming RTCP Receiver Reports. Since we don't have RTCP
-            // termination for audio, these reports come from the actual
-            // receivers in the conference and therefore the reported packet
-            // loss includes loss from the bridge to the receiver.
-            // When we are sending video this effect is small, because the
-            // number of video packets is much larger than the number of audio
-            // packets (and our calculation is based on the total number of
-            // received and lost packets).
-            // When video is muted, however, the effect might be significant,
-            // but we don't know what it is. We do know that it is positive, so
-            // as a temporary solution, until RTCP termination is implemented
-            // for the audio streams, we relax the packet loss checks here.
-            if (isMuted) {
-                packetLoss *= 0.5;
-            }
         }
 
         if (isMuted || !resolution || videoType === VideoType.DESKTOP

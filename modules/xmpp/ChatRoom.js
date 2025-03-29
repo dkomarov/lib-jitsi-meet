@@ -23,7 +23,7 @@ import RoomMetadata from './RoomMetadata';
 import XmppConnection from './XmppConnection';
 import { FEATURE_TRANSCRIBER } from './xmpp';
 
-const logger = getLogger(__filename);
+const logger = getLogger('modules/xmpp/ChatRoom');
 
 /**
  * How long we're going to wait for IQ response, before timeout error is triggered.
@@ -663,7 +663,7 @@ export default class ChatRoom extends Listenable {
                 // Re-send presence in case any presence updates were added,
                 // but blocked from sending, during the join process.
                 // send the presence only if there was a modification after we had synced it
-                if (this.presenceUpdateTime >= this.presenceSyncTime) {
+                if (this.presenceUpdateTime > this.presenceSyncTime) {
                     this.sendPresence();
                 }
 
@@ -675,6 +675,22 @@ export default class ChatRoom extends Listenable {
                 // Now let's check the disco-info to retrieve the
                 // meeting Id if any
                 !this.options.disableDiscoInfo && this.discoRoomInfo();
+            }
+
+            if (xElement && $(xElement).find('>status[code="110"]').length) {
+                // let's check for some backend forced permissions
+
+                const permissions = $(pres).find('>permissions[xmlns="http://jitsi.org/jitmeet"]>p');
+
+                if (permissions.length) {
+                    const permissionsMap = {};
+
+                    permissions.each((idx, p) => {
+                        permissionsMap[p.getAttribute('name')] = p.getAttribute('val');
+                    });
+
+                    this.eventEmitter.emit(XMPPEvents.PERMISSIONS_RECEIVED, permissionsMap);
+                }
             }
         } else if (jid === undefined) {
             logger.info('Ignoring member with undefined JID');

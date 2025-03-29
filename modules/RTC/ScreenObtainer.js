@@ -2,7 +2,11 @@ import JitsiTrackError from "../../JitsiTrackError";
 import * as JitsiTrackErrors from "../../JitsiTrackErrors";
 import browser from "../browser";
 
-const logger = require("@jitsi/logger").getLogger(__filename);
+import JitsiTrackError from "../../JitsiTrackError";
+import * as JitsiTrackErrors from "../../JitsiTrackErrors";
+import browser from "../browser";
+
+const logger = require("@jitsi/logger").getLogger("modules/RTC/ScreenObtainer");
 
 /**
  * The default frame rate for Screen Sharing.

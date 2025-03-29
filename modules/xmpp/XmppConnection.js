@@ -1,6 +1,5 @@
 import { getLogger } from '@jitsi/logger';
 import { $pres, Strophe } from 'strophe.js';
-import 'strophejs-plugin-stream-management';
 
 import { MAX_CONNECTION_RETRIES } from '../../service/connectivity/Constants';
 import Listenable from '../util/Listenable';
@@ -8,8 +7,9 @@ import Listenable from '../util/Listenable';
 import ResumeTask from './ResumeTask';
 import LastSuccessTracker from './StropheLastSuccess';
 import PingConnectionPlugin from './strophe.ping';
+import './strophe.stream-management';
 
-const logger = getLogger(__filename);
+const logger = getLogger('modules/xmpp/XmppConnection');
 
 /**
  * The lib-jitsi-meet layer for {@link Strophe.Connection}.
@@ -63,6 +63,18 @@ export default class XmppConnection extends Listenable {
         };
 
         this._stropheConn = new Strophe.Connection(serviceUrl);
+
+        // The mechanisms priorities as defined by Strophe
+        // *      Mechanism       Priority
+        // *      ------------------------
+        // *      SCRAM-SHA-1     60
+        // *      PLAIN           50
+        // *      ANONYMOUS       20
+        this._stropheConn.registerSASLMechanisms([
+            Strophe.SASLAnonymous,
+            Strophe.SASLPlain,
+            Strophe.SASLSHA1
+        ]);
         this._usesWebsocket = serviceUrl.startsWith('ws:') || serviceUrl.startsWith('wss:');
 
         // The default maxRetries is 5, which is too long.

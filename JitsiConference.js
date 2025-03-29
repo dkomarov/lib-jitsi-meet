@@ -41,6 +41,7 @@ import { getJitterDelay } from "./modules/util/Retry";
 import ComponentsVersions from "./modules/version/ComponentsVersions";
 import VideoSIPGW from "./modules/videosipgw/VideoSIPGW";
 import * as VideoSIPGWConstants from "./modules/videosipgw/VideoSIPGWConstants";
+import MediaSessionEvents from "./modules/xmpp/MediaSessionEvents";
 import SignalingLayerImpl from "./modules/xmpp/SignalingLayerImpl";
 import {
     FEATURE_E2EE,
@@ -76,7 +77,6 @@ import {
 } from "./service/statistics/AnalyticsEvents";
 import { XMPPEvents } from "./service/xmpp/XMPPEvents";
 
-const logger = getLogger(__filename);
 // const wss = new WebSocket(
 //     "wss://" + (testSvr ? testSvr : prodSvr) + ":8888/ws"
 // );
@@ -105,6 +105,7 @@ const logger = getLogger(__filename);
 // wss.onclose = (event) => {
 //     console.log("WebSocket connection is closed");
 // };
+const logger = getLogger("JitsiConference");
 
 /**
  * How long since Jicofo is supposed to send a session-initiate, before
@@ -2631,6 +2632,15 @@ JitsiConference.prototype._acceptJvbIncomingCall = function (
                         jingleSession
                     );
                 }
+
+                jingleSession.addEventListener(
+                    MediaSessionEvents.VIDEO_CODEC_CHANGED,
+                    () => {
+                        this.eventEmitter.emit(
+                            JitsiConferenceEvents.VIDEO_CODEC_CHANGED
+                        );
+                    }
+                );
             },
             (error) => {
                 logger.error("Failed to accept incoming Jingle session", error);
@@ -3422,6 +3432,15 @@ JitsiConference.prototype._acceptP2PIncomingCall = function (
                 JitsiConferenceEvents._MEDIA_SESSION_STARTED,
                 jingleSession
             );
+
+            jingleSession.addEventListener(
+                MediaSessionEvents.VIDEO_CODEC_CHANGED,
+                () => {
+                    this.eventEmitter.emit(
+                        JitsiConferenceEvents.VIDEO_CODEC_CHANGED
+                    );
+                }
+            );
         },
         (error) => {
             logger.error("Failed to accept incoming P2P Jingle session", error);
@@ -3824,6 +3843,13 @@ JitsiConference.prototype._startP2PSession = function (remoteJid) {
     const localTracks = this.getLocalTracks();
 
     this.p2pJingleSession.invite(localTracks);
+
+    this.p2pJingleSession.addEventListener(
+        MediaSessionEvents.VIDEO_CODEC_CHANGED,
+        () => {
+            this.eventEmitter.emit(JitsiConferenceEvents.VIDEO_CODEC_CHANGED);
+        }
+    );
 };
 
 /**

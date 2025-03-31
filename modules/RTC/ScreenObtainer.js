@@ -2,10 +2,6 @@ import JitsiTrackError from "../../JitsiTrackError";
 import * as JitsiTrackErrors from "../../JitsiTrackErrors";
 import browser from "../browser";
 
-import JitsiTrackError from "../../JitsiTrackError";
-import * as JitsiTrackErrors from "../../JitsiTrackErrors";
-import browser from "../browser";
-
 const logger = require("@jitsi/logger").getLogger("modules/RTC/ScreenObtainer");
 
 /**

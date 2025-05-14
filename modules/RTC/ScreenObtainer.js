@@ -12,15 +12,15 @@ export const SS_DEFAULT_FRAME_RATE = 5;
 /**
  * Handles obtaining a stream from a screen capture on different browsers.
  */
-const ScreenObtainer = {
+class ScreenObtainer {
     /**
-     * If not <tt>null</tt> it means that the initialization process is still in
-     * progress. It is used to make desktop stream request wait and continue
-     * after it's done.
-     * {@type Promise|null}
+     *
      */
-
-    obtainStream: null,
+    constructor() {
+        this.obtainStream = this._createObtainStreamMethod();
+        this.options = {};
+        this._electronSkipDisplayMedia = false;
+    }
 
     /**
      * Initializes the function used to obtain a screen capture
@@ -30,14 +30,11 @@ const ScreenObtainer = {
      */
     init(options = {}) {
         this.options = options;
-        this.obtainStream = this._createObtainStreamMethod();
 
         if (!this.obtainStream) {
-            logger.info("Desktop sharing disabled");
+            logger.warn("Desktop sharing not supported");
         }
-
-        this._electronSkipDisplayMedia = false;
-    },
+    }
 
     /**
      * Returns a method which will be used to obtain the screen sharing stream
@@ -56,10 +53,10 @@ const ScreenObtainer = {
         } else if (supportsGetDisplayMedia) {
             return this.obtainScreenFromGetDisplayMedia;
         }
-        logger.log("Screen sharing not supported on ", browser.getName());
+        logger.warn("Screen sharing not supported on ", browser.getName());
 
         return null;
-    },
+    }
 
     /**
      * Gets the appropriate constraints for audio sharing.
@@ -78,7 +75,7 @@ const ScreenObtainer = {
             : true;
 
         return audio;
-    },
+    }
 
     /**
      * Checks whether obtaining a screen capture is supported in the current
@@ -87,7 +84,7 @@ const ScreenObtainer = {
      */
     isSupported() {
         return this.obtainStream !== null;
-    },
+    }
 
     /**
      * Obtains a screen capture stream on Electron.
@@ -224,15 +221,16 @@ const ScreenObtainer = {
                 )
             );
         }
-    },
+    }
 
     /**
      * Obtains a screen capture stream using getDisplayMedia.
      *
      * @param callback - The success callback.
      * @param errorCallback - The error callback.
+     * @param {Object} options - Optional parameters.
      */
-    obtainScreenFromGetDisplayMedia(callback, errorCallback) {
+    obtainScreenFromGetDisplayMedia(callback, errorCallback, options = {}) {
         let getDisplayMedia;
 
         if (navigator.getDisplayMedia) {
@@ -247,7 +245,13 @@ const ScreenObtainer = {
         const audio = this._getAudioConstraints();
         let video = {};
         const constraintOpts = {};
-        const { desktopSharingFrameRate, screenShareSettings } = this.options;
+
+        // The options passed to this method should take precedence over the global settings.
+        const {
+            desktopSharingFrameRate = this.options?.desktopSharingFrameRate,
+            resolution = this.options?.resolution,
+            screenShareSettings = this.options?.screenShareSettings,
+        } = options;
 
         if (typeof desktopSharingFrameRate === "object") {
             video.frameRate = desktopSharingFrameRate;
@@ -331,14 +335,24 @@ const ScreenObtainer = {
                         minFps = desktopSharingFrameRate.min;
                     }
 
-                    const contraints = {
+                    const trackConstraints = {
                         frameRate: {
                             min: minFps,
                         },
                     };
 
+                    // Set the resolution if it is specified in the options. This is currently only enabled for testing.
+                    // Note that this may result in browser crashes if the shared window is resized due to browser bugs
+                    // like https://issues.chromium.org/issues/40672396
+                    if (resolution && this.options.testing?.testMode) {
+                        trackConstraints.height = resolution;
+                        trackConstraints.width = Math.floor(
+                            (resolution * 16) / 9
+                        );
+                    }
+
                     try {
-                        track.applyConstraints(contraints);
+                        track.applyConstraints(trackConstraints);
                     } catch (err) {
                         logger.warn(
                             `Min fps=${minFps} constraint could not be applied on the desktop track,` +
@@ -347,9 +361,16 @@ const ScreenObtainer = {
                     }
                 }
 
+                const videoTracks = stream?.getVideoTracks();
+                const track =
+                    videoTracks?.length > 0 ? videoTracks[0] : undefined;
+                const { deviceId } = track?.getSettings() ?? {};
+
                 callback({
                     stream,
-                    sourceId: stream.id,
+
+                    // Used by remote-control to identify the display that is currently shared.
+                    sourceId: deviceId ?? stream.id,
                 });
             })
             .catch((error) => {
@@ -398,7 +419,7 @@ const ScreenObtainer = {
                     );
                 }
             });
-    },
+    }
 
     /**
      * Obtains a screen capture stream using getDisplayMedia.
@@ -425,7 +446,7 @@ const ScreenObtainer = {
                     )
                 );
             });
-    },
+    }
 
     /** Sets the contentHint on the transmitted MediaStreamTrack to indicate charaterstics in the video stream, which
      * informs RTCPeerConnection on how to encode the track (to prefer motion or individual frame detail).
@@ -446,7 +467,7 @@ const ScreenObtainer = {
         } else {
             logger.warn("MediaStreamTrack contentHint attribute not supported");
         }
-    },
+    }
 
     /**
      * Sets the max frame rate to be used for a desktop track capture.
@@ -461,7 +482,7 @@ const ScreenObtainer = {
             min: SS_DEFAULT_FRAME_RATE,
             max: maxFps,
         };
-    },
-};
+    }
+}
 
-export default ScreenObtainer;
+export default new ScreenObtainer();

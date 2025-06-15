@@ -100,10 +100,6 @@ export enum XMPPEvents {
     // interrupted. This should go to the RTC module.
     CONNECTION_INTERRUPTED = 'xmpp.connection.interrupted',
 
-    // Designates an event indicating that the call has been migrated to a different
-    // bridge and that the client needs to be restarted for a successful transition.
-    CONNECTION_RESTARTED = 'xmpp.connection.restart',
-
     // Designates an event indicating that the media (ICE) connection was
     // restored. This should go to the RTC module.
     CONNECTION_RESTORED = 'xmpp.connection.restored',
@@ -370,10 +366,6 @@ export enum XMPPEvents {
      * Event fired when speaker stats update message is received.
      */
     SPEAKER_STATS_RECEIVED = 'xmpp.speaker_stats_received',
-
-    // Designates an event indicating that we should join the conference with
-    // audio and/or video muted.
-    START_MUTED_FROM_FOCUS = 'xmpp.start_muted_from_focus',
 
     // Designates an event indicating that the subject of the XMPP MUC has
     // changed.

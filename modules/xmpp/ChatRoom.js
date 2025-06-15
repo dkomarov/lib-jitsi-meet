@@ -1,5 +1,5 @@
-import { safeJsonParse } from '@jitsi/js-utils/json';
 import { getLogger } from '@jitsi/logger';
+import emojiRegex from 'emoji-regex';
 import $ from 'jquery';
 import { isEqual } from 'lodash-es';
 import { $iq, $msg, $pres, Strophe } from 'strophe.js';
@@ -24,6 +24,11 @@ import XmppConnection from './XmppConnection';
 import { FEATURE_TRANSCRIBER } from './xmpp';
 
 const logger = getLogger('modules/xmpp/ChatRoom');
+
+/**
+ * Regex that matches all emojis.
+ */
+const EMOJI_REGEX = emojiRegex();
 
 /**
  * How long we're going to wait for IQ response, before timeout error is triggered.
@@ -423,18 +428,6 @@ export default class ChatRoom extends Listenable {
                 this.eventEmitter.emit(XMPPEvents.MUC_VISITORS_SUPPORTED_CHANGED, visitorsSupported);
             }
 
-            const roomMetadataEl
-                = $(result).find('>query>x[type="result"]>field[var="muc#roominfo_jitsimetadata"]>value');
-            const roomMetadataText = roomMetadataEl?.text();
-
-            if (roomMetadataText) {
-                try {
-                    this.roomMetadata._handleMessages(safeJsonParse(roomMetadataText));
-                } catch (e) {
-                    logger.warn('Failed to set room metadata', e);
-                }
-            }
-
             this.initialDiscoRoomInfoReceived = true;
             this.eventEmitter.emit(XMPPEvents.ROOM_DISCO_INFO_UPDATED);
         }, error => {
@@ -680,10 +673,10 @@ export default class ChatRoom extends Listenable {
 
             if (xElement && $(xElement).find('>status[code="110"]').length) {
                 // let's check for some backend forced permissions
+                const permissionEl = $(pres).find('>permissions[xmlns="http://jitsi.org/jitmeet"]');
 
-                const permissions = $(pres).find('>permissions[xmlns="http://jitsi.org/jitmeet"]>p');
-
-                if (permissions.length) {
+                if (permissionEl.length) {
+                    const permissions = $(permissionEl).find('p');
                     const permissionsMap = {};
 
                     permissions.each((idx, p) => {
@@ -994,6 +987,12 @@ export default class ChatRoom extends Listenable {
      * @param {string} receiverId - The receiver of the message if it is private.
      */
     sendReaction(reaction, messageId, receiverId) {
+        const m = reaction.match(EMOJI_REGEX);
+
+        if (!m || !m[0]) {
+            throw new Error(`Invalid reaction: ${reaction}`);
+        }
+
         // Adds the 'to' attribute depending on if the message is private or not.
         const msg = receiverId ? $msg({ to: `${this.roomjid}/${receiverId}`,
             type: 'chat' }) : $msg({ to: this.roomjid,
@@ -1001,7 +1000,7 @@ export default class ChatRoom extends Listenable {
 
         msg.c('reactions', { id: messageId,
             xmlns: 'urn:xmpp:reactions:0' })
-            .c('reaction', {}, reaction)
+            .c('reaction', {}, m[0])
             .up().c('store', { xmlns: 'urn:xmpp:hints' });
 
         this.connection.send(msg);
@@ -1216,11 +1215,17 @@ export default class ChatRoom extends Listenable {
 
             reactions.each((_, reactionElem) => {
                 const reaction = $(reactionElem).text();
+                const m = reaction.match(EMOJI_REGEX);
 
-                reactionList.push(reaction);
+                // Only allow one reaction per <reaction> element.
+                if (m && m[0]) {
+                    reactionList.push(m[0]);
+                }
             });
 
-            this.eventEmitter.emit(XMPPEvents.REACTION_RECEIVED, from, reactionList, messageId);
+            if (reactionList.length > 0) {
+                this.eventEmitter.emit(XMPPEvents.REACTION_RECEIVED, from, reactionList, messageId);
+            }
 
             return true;
         }
@@ -2066,6 +2071,51 @@ export default class ChatRoom extends Listenable {
         msg.c('end_conference').up();
 
         this.xmpp.connection.send(msg);
+    }
+
+    /**
+     * Requests short-lived credentials for a service.
+     * The function does not use anything from the room, but the backend requires the sender
+     * to be in the room as the credentials contain the meeting ID and are valid only for the room.
+     * @param service
+     */
+    getShortTermCredentials(service) {
+        // Gets credentials via xep-0215 and cache it
+        return new Promise((resolve, reject) => {
+            const cachedCredentials = this.cachedShortTermCredentials || [];
+
+            if (cachedCredentials[service]) {
+                resolve(cachedCredentials[service]);
+
+                return;
+            }
+
+            this.connection.sendIQ(
+                $iq({
+                    type: 'get',
+                    to: this.xmpp.options.hosts.domain
+                })
+                    .c('credentials', { xmlns: 'urn:xmpp:extdisco:2' })
+                    .c('service', {
+                        type: 'short-lived-token',
+                        host: service
+                    }),
+                res => {
+                    const resultServiceEl = $(res).find('>credentials[xmlns="urn:xmpp:extdisco:2"]>service');
+                    const currentDate = new Date();
+                    const expirationDate = new Date(resultServiceEl.attr('expires'));
+
+                    cachedCredentials[service] = resultServiceEl.attr('password');
+                    this.cachedShortTermCredentials = cachedCredentials;
+
+                    setTimeout(() => {
+                        this.cachedShortTermCredentials[service] = undefined;
+                    }, expirationDate - currentDate - 10_000); // 10 seconds before expiration
+
+                    resolve(this.cachedShortTermCredentials[service]);
+                },
+                reject);
+        });
     }
 }
 

@@ -27,6 +27,10 @@ const AVAILABLE_DEVICES_POLL_INTERVAL_TIME = 3000; // ms
  */
 const DEFAULT_CONSTRAINTS = {
     video: {
+        frameRate: {
+            max: 30,
+            min: 15
+        },
         height: {
             ideal: 720,
             max: 720,
@@ -36,10 +40,6 @@ const DEFAULT_CONSTRAINTS = {
             ideal: 1280,
             max: 1280,
             min: 320
-        },
-        frameRate: {
-            min: 15,
-            max: 30
         }
     }
 };
@@ -140,21 +140,40 @@ function getConstraints(um = [], options = {}) {
 
     if (um.indexOf('audio') >= 0) {
         if (!constraints.audio || typeof constraints.audio === 'boolean') {
-            constraints.audio = {};
-        }
+            constraints.audio = {
+                autoGainControl: !disableAGC && !disableAP,
+                echoCancellation: !disableAEC && !disableAP,
+                noiseSuppression: !disableNS && !disableAP
+            };
+            if (stereo) {
+                Object.assign(constraints.audio, { channelCount: 2 });
+            }
+        } else {
+            const allowedAudioProps = {
+                autoGainControl: 'boolean',
+                channelCount: 'number',
+                echoCancellation: 'boolean',
+                noiseSuppression: 'boolean'
+            };
 
-        constraints.audio = {
-            autoGainControl: !disableAGC && !disableAP,
-            echoCancellation: !disableAEC && !disableAP,
-            noiseSuppression: !disableNS && !disableAP
-        };
+            const validConstraints = {};
+
+            for (const [ key, value ] of Object.entries(constraints.audio)) {
+                if (allowedAudioProps[key]) {
+                    if (typeof value !== allowedAudioProps[key]) {
+                        continue;
+                    }
+                    if (key === 'channelCount' && ![ 1, 2 ].includes(value)) {
+                        continue;
+                    }
+                    validConstraints[key] = value;
+                }
+            }
+            constraints.audio = validConstraints;
+        }
 
         if (options.micDeviceId) {
             constraints.audio.deviceId = { exact: options.micDeviceId };
-        }
-
-        if (stereo) {
-            Object.assign(constraints.audio, { channelCount: 2 });
         }
     } else {
         constraints.audio = false;
@@ -188,11 +207,11 @@ function compareAvailableMediaDevices(newDevices) {
      */
     function mediaDeviceInfoToJSON(info) {
         return JSON.stringify({
-            kind: info.kind,
             deviceId: info.deviceId,
+            facing: info.facing,
             groupId: info.groupId,
-            label: info.label,
-            facing: info.facing
+            kind: info.kind,
+            label: info.label
         });
     }
 }
@@ -218,12 +237,12 @@ function sendDeviceListToAnalytics(deviceList) {
         const attributes = {
             'audio_input_device_count': audioInputDeviceCount,
             'audio_output_device_count': audioOutputDeviceCount,
-            'video_input_device_count': videoInputDeviceCount,
-            'video_output_device_count': videoOutputDeviceCount,
-            'device_id': device.deviceId,
             'device_group_id': device.groupId,
+            'device_id': device.deviceId,
             'device_kind': device.kind,
-            'device_label': device.label
+            'device_label': device.label,
+            'video_input_device_count': videoInputDeviceCount,
+            'video_output_device_count': videoOutputDeviceCount
         };
 
         Statistics.sendAnalytics(AVAILABLE_DEVICE, attributes);
@@ -540,14 +559,20 @@ class RTCUtils extends Listenable {
      * relevant constraints.
      * @param {string[]} options.devices - The types of media to capture. Valid
      * values are "desktop", "audio", and "video".
-     * @param {Object} options.desktopSharingFrameRate
-     * @param {Object} options.desktopSharingFrameRate.min - Minimum fps
-     * @param {Object} options.desktopSharingFrameRate.max - Maximum fps
-     * @param {String} options.desktopSharingSourceDevice - The device id or
+     * @param {Object} [options.desktopSharingFrameRate]
+     * @param {Object} [options.desktopSharingFrameRate.min] - Minimum fps
+     * @param {Object} [options.desktopSharingFrameRate.max] - Maximum fps
+     * @param {string} [options.desktopSharingSourceDevice] - The device id or
      * label for a video input source that should be used for screensharing.
-     * @param {Array<string>} options.desktopSharingSources - The types of sources ("screen", "window", etc)
+     * @param {string[]} [options.desktopSharingSources] - The types of sources ("screen", "window", etc)
      * from which the user can select what to share.
-     * @returns {Promise} The promise, when successful, will return an array of
+     * @param {string} [options.cameraDeviceId] - Camera device id
+     * @param {string} [options.micDeviceId] - Microphone device id
+     * @param {string} [options.resolution] - Resolution constraints
+     * @param {IStreamEffect[]} [options.effects] - Optional effects array for the track
+     * @param {ITrackConstraints} [options.constraints] - The constraints to use for
+     * the audio and video tracks.
+     * @returns {Promise<IStreamInfo[]>} The promise, when successful, will return an array of
      * meta data for the requested device type, which includes the stream and
      * track. If an error occurs, it will be deferred to the caller for
      * handling.
@@ -648,9 +673,9 @@ class RTCUtils extends Listenable {
                 const desktopAudioStream = new MediaStream(desktopAudioTracks);
 
                 mediaStreamsMetaData.push({
-                    stream: desktopAudioStream,
                     sourceId,
                     sourceType,
+                    stream: desktopAudioStream,
                     track: desktopAudioStream.getAudioTracks()[0]
                 });
             }
@@ -661,9 +686,9 @@ class RTCUtils extends Listenable {
                 const desktopVideoStream = new MediaStream(desktopVideoTracks);
 
                 mediaStreamsMetaData.push({
-                    stream: desktopVideoStream,
                     sourceId,
                     sourceType,
+                    stream: desktopVideoStream,
                     track: desktopVideoStream.getVideoTracks()[0],
                     videoType: VideoType.DESKTOP
                 });
@@ -713,9 +738,9 @@ class RTCUtils extends Listenable {
 
                 mediaStreamsMetaData.push({
                     constraints: constraints.audio,
+                    effects: otherOptions.effects,
                     stream: audioStream,
-                    track: audioStream.getAudioTracks()[0],
-                    effects: otherOptions.effects
+                    track: audioStream.getAudioTracks()[0]
                 });
             }
 
@@ -726,10 +751,10 @@ class RTCUtils extends Listenable {
 
                 mediaStreamsMetaData.push({
                     constraints: constraints.video,
+                    effects: otherOptions.effects,
                     stream: videoStream,
                     track: videoStream.getVideoTracks()[0],
-                    videoType: VideoType.CAMERA,
-                    effects: otherOptions.effects
+                    videoType: VideoType.CAMERA
                 });
             }
         };
@@ -862,9 +887,9 @@ class RTCUtils extends Listenable {
         const deviceList = [];
         const deviceData = {
             deviceId: device.deviceId,
+            groupId: device.groupId,
             kind: device.kind,
-            label: device.label,
-            groupId: device.groupId
+            label: device.label
         };
 
         deviceList.push(deviceData);

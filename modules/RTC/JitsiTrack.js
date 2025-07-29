@@ -13,9 +13,9 @@ const logger = getLogger('modules/RTC/JitsiTrack');
  * Maps our handler types to MediaStreamTrack properties.
  */
 const trackHandler2Prop = {
+    'track_ended': 'onended',
     'track_mute': 'onmute', // Not supported on FF
-    'track_unmute': 'onunmute',
-    'track_ended': 'onended'
+    'track_unmute': 'onunmute'
 };
 
 /**
@@ -180,7 +180,7 @@ export default class JitsiTrack extends EventEmitter {
 
     /**
      * Unregisters all event handlers bound to the underlying media stream/track
-     * @private
+     * @public
      */
     _unregisterHandlers() {
         if (!this.stream) {

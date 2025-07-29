@@ -109,6 +109,12 @@ export enum XMPPEvents {
      */
     CONNECTION_STATUS_CHANGED = 'xmpp.connection.status.changed',
 
+    /**
+     * Designates an event indicating that the focus has asked us to disable our
+     * desktop share.
+     */
+    DESKTOP_MUTED_BY_FOCUS = 'xmpp.desktop_muted_by_focus',
+
     // Designates an event indicating that the display name of a participant
     // has changed.
     DISPLAY_NAME_CHANGED = 'xmpp.display_name_changed',
@@ -129,6 +135,26 @@ export enum XMPPEvents {
     EMUC_ROOM_REMOVED = 'xmpp.emuc_room_removed',
 
     ETHERPAD = 'xmpp.etherpad',
+
+    /**
+     * Event fired when we receive a message for files sharing.
+     */
+    FILE_SHARING_EVENT = 'xmpp.files-sharing.event',
+
+    /**
+     * Event emitted when a list file is received in the conference.
+     */
+    FILE_SHARING_FILES_RECEIVED = 'xmpp.files-sharing.list',
+
+    /**
+     * Event emitted when a file is added to the conference.
+     */
+    FILE_SHARING_FILE_ADDED = 'xmpp.files-sharing.add',
+
+    /**
+     * Event emitted when a file is removed from the conference.
+     */
+    FILE_SHARING_FILE_REMOVED = 'xmpp.files-sharing.remove',
 
     FOCUS_DISCONNECTED = 'xmpp.focus_disconnected',
 

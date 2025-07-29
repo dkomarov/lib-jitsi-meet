@@ -1,6 +1,5 @@
 import { safeJsonParse } from '@jitsi/js-utils/json';
 import { getLogger } from '@jitsi/logger';
-import $ from 'jquery';
 import { unescape } from 'lodash-es';
 import { $msg, Strophe } from 'strophe.js';
 
@@ -14,8 +13,10 @@ import FeatureFlags from '../flags/FeatureFlags';
 import Statistics from '../statistics/statistics';
 import Listenable from '../util/Listenable';
 import RandomUtil from '../util/RandomUtil';
+import $ from '../util/XMLParser';
 
 import Caps, { parseDiscoInfo } from './Caps';
+import { IDENTITY_TYPE as FILE_SHARING_IDENTITY_TYPE } from './FileSharing';
 import XmppConnection from './XmppConnection';
 import Moderator from './moderator';
 import './strophe.disco';
@@ -64,10 +65,10 @@ function createConnection({
     return new XmppConnection({
         enableWebsocketResume,
         serviceUrl,
+        shard,
         websocketKeepAlive,
         websocketKeepAliveUrl,
-        xmppPing,
-        shard
+        xmppPing
     });
 }
 
@@ -177,11 +178,11 @@ export default class XMPP extends Listenable {
         this.connection = createConnection({
             enableWebsocketResume: options.enableWebsocketResume,
             serviceUrl: options.serviceUrl,
+            shard: options.deploymentInfo.shard,
             token,
             websocketKeepAlive: options.websocketKeepAlive,
             websocketKeepAliveUrl: options.websocketKeepAliveUrl,
-            xmppPing,
-            shard: options.deploymentInfo.shard
+            xmppPing
         });
 
         this.moderator = new Moderator(this);
@@ -218,18 +219,23 @@ export default class XMPP extends Listenable {
         // Initialize features advertised in disco-info
         this.initFeaturesList();
 
+        this.connection.addHandler(this._onPrivateMessage.bind(this), null, 'message', null, null);
+
         // Setup a disconnect on unload as a way to facilitate API consumers. It
         // sounds like they would want that. A problem for them though may be if
         // they wanted to utilize the connected connection in an unload handler
         // of their own. However, it should be fairly easy for them to do that
         // by registering their unload handler before us.
-        $(window).on(`${this.options.disableBeforeUnloadHandlers ? '' : 'beforeunload '}unload`, ev => {
+        const events = `${this.options.disableBeforeUnloadHandlers ? '' : 'beforeunload '}unload`;
+        const handleDisconnect = ev => {
             this.disconnect(ev).catch(() => {
-                // ignore errors in order to not brake the unload.
+                // Ignore errors in order to not break the unload.
             });
-        });
+        };
 
-        this.connection.addHandler(this._onPrivateMessage.bind(this), null, 'message', null, null);
+        for (const event of events.split(' ')) {
+            window.addEventListener(event, handleDisconnect);
+        }
     }
 
     /**
@@ -523,6 +529,11 @@ export default class XMPP extends Listenable {
                         .then(({ features: f }) => processBreakoutRoomsFeatures(f))
                         .catch(e => logger.warn('Error getting features for breakout rooms.', e && e.message));
                 }
+            }
+
+            if (identity.type === FILE_SHARING_IDENTITY_TYPE) {
+                this.fileSharingComponentAddress = identity.name;
+                this._components.push(this.fileSharingComponentAddress);
             }
 
             if (identity.type === 'room_metadata') {
@@ -982,10 +993,10 @@ export default class XMPP extends Listenable {
         const msg = $msg({ to: this.speakerStatsComponentAddress });
 
         msg.c('speakerstats', {
-            xmlns: 'http://jitsi.org/jitmeet',
             room: roomJid,
-            silence })
-            .up();
+            silence,
+            xmlns: 'http://jitsi.org/jitmeet'
+        }).up();
 
         this.connection.send(msg);
     }
@@ -1004,11 +1015,11 @@ export default class XMPP extends Listenable {
         const msg = $msg({ to: this.speakerStatsComponentAddress });
 
         msg.c('faceLandmarks', {
-            xmlns: 'http://jitsi.org/jitmeet',
-            room: roomJid,
+            duration: payload.duration,
             faceExpression: payload.faceExpression,
+            room: roomJid,
             timestamp: payload.timestamp,
-            duration: payload.duration
+            xmlns: 'http://jitsi.org/jitmeet'
         }).up();
 
         this.connection.send(msg);
@@ -1076,7 +1087,7 @@ export default class XMPP extends Listenable {
             return true;
         }
 
-        const jsonMessage = $(msg).find('>json-message')
+        const jsonMessage = $(msg).find('>json-message[xmlns="http://jitsi.org/jitmeet"]')
             .text();
         const parsedJson = this.tryParseJSONAndVerify(jsonMessage);
 
@@ -1090,6 +1101,8 @@ export default class XMPP extends Listenable {
             this.eventEmitter.emit(XMPPEvents.AV_MODERATION_RECEIVED, parsedJson);
         } else if (parsedJson[JITSI_MEET_MUC_TYPE] === 'breakout_rooms') {
             this.eventEmitter.emit(XMPPEvents.BREAKOUT_ROOMS_EVENT, parsedJson);
+        } else if (parsedJson[JITSI_MEET_MUC_TYPE] === FILE_SHARING_IDENTITY_TYPE) {
+            this.eventEmitter.emit(XMPPEvents.FILE_SHARING_EVENT, parsedJson);
         } else if (parsedJson[JITSI_MEET_MUC_TYPE] === 'room_metadata') {
             this.eventEmitter.emit(XMPPEvents.ROOM_METADATA_EVENT, parsedJson);
         } else if (parsedJson[JITSI_MEET_MUC_TYPE] === 'visitors') {

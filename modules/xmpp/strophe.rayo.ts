@@ -1,6 +1,7 @@
 import { getLogger } from '@jitsi/logger';
-import $ from 'jquery';
 import { $iq, type Connection } from 'strophe.js';
+
+import $ from '../util/XMLParser';
 
 import ConnectionPlugin from './ConnectionPlugin';
 
@@ -63,14 +64,14 @@ export default class RayoConnectionPlugin extends ConnectionPlugin {
                 return;
             }
             const req = $iq({
-                type: 'set',
                 to: focusMucJid,
+                type: 'set',
             });
 
             req.c('dial', {
-                xmlns: RAYO_XMLNS,
-                to,
                 from,
+                to,
+                xmlns: RAYO_XMLNS,
             });
             req.c('header', {
                 name: 'JvbRoomName',
@@ -119,8 +120,8 @@ export default class RayoConnectionPlugin extends ConnectionPlugin {
             }
 
             const req = $iq({
-                type: 'set',
                 to: this.callResource,
+                type: 'set',
             });
 
             req.c('hangup', {

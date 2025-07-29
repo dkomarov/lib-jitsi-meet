@@ -1,6 +1,5 @@
 import { getLogger } from '@jitsi/logger';
 import emojiRegex from 'emoji-regex';
-import $ from 'jquery';
 import { isEqual } from 'lodash-es';
 import { $iq, $msg, $pres, Strophe } from 'strophe.js';
 import { v4 as uuidv4 } from 'uuid';
@@ -15,9 +14,11 @@ import Settings from '../settings/Settings';
 import EventEmitterForwarder from '../util/EventEmitterForwarder';
 import Listenable from '../util/Listenable';
 import { getJitterDelay } from '../util/Retry';
+import $ from '../util/XMLParser';
 
 import AVModeration from './AVModeration';
 import BreakoutRooms from './BreakoutRooms';
+import FileSharing from './FileSharing';
 import Lobby from './Lobby';
 import RoomMetadata from './RoomMetadata';
 import XmppConnection from './XmppConnection';
@@ -37,6 +38,24 @@ const EMOJI_REGEX = emojiRegex();
 const IQ_TIMEOUT = 10000;
 
 export const parser = {
+    json2packet(nodes, packet) {
+        for (let i = 0; i < nodes.length; i++) {
+            const node = nodes[i];
+
+            if (node) {
+                packet.c(node.tagName, node.attributes);
+                if (node.value) {
+                    packet.t(node.value);
+                }
+                if (node.children) {
+                    this.json2packet(node.children, packet);
+                }
+                packet.up();
+            }
+        }
+
+        // packet.up();
+    },
     packet2JSON(xmlElement, nodes) {
         for (const child of Array.from(xmlElement.children)) {
             const node = {
@@ -59,24 +78,6 @@ export const parser = {
             nodes.push(node);
             this.packet2JSON(child, node.children);
         }
-    },
-    json2packet(nodes, packet) {
-        for (let i = 0; i < nodes.length; i++) {
-            const node = nodes[i];
-
-            if (node) {
-                packet.c(node.tagName, node.attributes);
-                if (node.value) {
-                    packet.t(node.value);
-                }
-                if (node.children) {
-                    this.json2packet(node.children, packet);
-                }
-                packet.up();
-            }
-        }
-
-        // packet.up();
     }
 };
 
@@ -195,6 +196,7 @@ export default class ChatRoom extends Listenable {
         }
         this.avModeration = new AVModeration(this);
         this.breakoutRooms = new BreakoutRooms(this);
+        this.fileSharing = new FileSharing(this);
         this.roomMetadata = new RoomMetadata(this);
         this.initPresenceMap(options);
         this.lastPresences = {};
@@ -359,8 +361,8 @@ export default class ChatRoom extends Listenable {
 
         const getInfo
             = $iq({
-                type: 'get',
-                to: this.roomjid
+                to: this.roomjid,
+                type: 'get'
             })
                 .c('query', { xmlns: Strophe.NS.DISCO_INFO });
 
@@ -463,11 +465,11 @@ export default class ChatRoom extends Listenable {
             return;
         }
 
-        const getForm = $iq({ type: 'get',
-            to: this.roomjid })
+        const getForm = $iq({ to: this.roomjid,
+            type: 'get' })
             .c('query', { xmlns: 'http://jabber.org/protocol/muc#owner' })
-            .c('x', { xmlns: 'jabber:x:data',
-                type: 'submit' });
+            .c('x', { type: 'submit',
+                xmlns: 'jabber:x:data' });
 
         this.connection.sendIQ(getForm, form => {
             if (!$(form).find(
@@ -482,8 +484,8 @@ export default class ChatRoom extends Listenable {
                 type: 'set' })
                 .c('query', { xmlns: 'http://jabber.org/protocol/muc#owner' });
 
-            formSubmit.c('x', { xmlns: 'jabber:x:data',
-                type: 'submit' });
+            formSubmit.c('x', { type: 'submit',
+                xmlns: 'jabber:x:data' });
 
             formSubmit.c('field', { 'var': 'FORM_TYPE' })
                 .c('value')
@@ -964,8 +966,10 @@ export default class ChatRoom extends Listenable {
      * @param elementName
      */
     sendMessage(message, elementName) {
-        const msg = $msg({ to: this.roomjid,
-            type: 'groupchat' });
+        const msg = $msg({
+            to: this.roomjid,
+            type: 'groupchat'
+        });
 
         // We are adding the message in a packet extension. If this element
         // is different from 'body', we add a custom namespace.
@@ -1013,8 +1017,9 @@ export default class ChatRoom extends Listenable {
      * @param message
      * @param elementName
      */
-    sendPrivateMessage(id, message, elementName) {
-        const msg = $msg({ to: `${this.roomjid}/${id}`,
+    sendPrivateMessage(id, message, elementName, useDirectJid = false) {
+        const targetJid = useDirectJid ? id : `${this.roomjid}/${id}`;
+        const msg = $msg({ to: targetJid,
             type: 'chat' });
 
         // We are adding the message in packet. If this element is different
@@ -1279,7 +1284,7 @@ export default class ChatRoom extends Listenable {
             }
         }
 
-        const jsonMessage = $(msg).find('>json-message').text();
+        const jsonMessage = $(msg).find('>json-message[xmlns="http://jitsi.org/jitmeet"]').text();
 
         if (jsonMessage) {
             const parsedJson = this.xmpp.tryParseJSONAndVerify(jsonMessage);
@@ -1300,8 +1305,28 @@ export default class ChatRoom extends Listenable {
             const messageId = $(msg).attr('id') || uuidv4();
 
             if (type === 'chat') {
+                // Check if this is a visitor message (has nick element like group messages)
+                const nickEl = $(msg).find('>nick');
+                let nick;
+
+                if (nickEl.length > 0) {
+                    nick = nickEl.text();
+                }
+
+                // Check for original visitor JID in addresses element (XEP-0033)
+                let originalFrom = null;
+                const addressesEl = $(msg).find('>addresses[xmlns="http://jabber.org/protocol/address"]');
+
+                if (addressesEl.length > 0) {
+                    const ofromEl = addressesEl.find('address[type="ofrom"]');
+
+                    if (ofromEl.length > 0) {
+                        originalFrom = ofromEl.attr('jid');
+                    }
+                }
+
                 this.eventEmitter.emit(XMPPEvents.PRIVATE_MESSAGE_RECEIVED,
-                        from, txt, this.myroomjid, stamp, messageId);
+                        from, txt, this.myroomjid, stamp, messageId, nick, Boolean(nick), originalFrom);
             } else if (type === 'groupchat') {
                 const nickEl = $(msg).find('>nick');
                 let nick;
@@ -1506,8 +1531,8 @@ export default class ChatRoom extends Listenable {
                             });
 
                     formsubmit.c('x', {
-                        xmlns: 'jabber:x:data',
-                        type: 'submit'
+                        type: 'submit',
+                        xmlns: 'jabber:x:data'
                     });
                     formsubmit
                         .c('field', { 'var': 'FORM_TYPE' })
@@ -1613,8 +1638,8 @@ export default class ChatRoom extends Listenable {
                         }).c('query', { xmlns: 'http://jabber.org/protocol/muc#owner' });
 
                     formToSubmit.c('x', {
-                        xmlns: 'jabber:x:data',
-                        type: 'submit'
+                        type: 'submit',
+                        xmlns: 'jabber:x:data'
                     });
                     formToSubmit
                         .c('field', { 'var': 'FORM_TYPE' })
@@ -1882,6 +1907,13 @@ export default class ChatRoom extends Listenable {
     }
 
     /**
+     * @returns {FileSharing}
+     */
+    getFileSharing() {
+        return this.fileSharing;
+    }
+
+    /**
      * @returns {RoomMetadata}
      */
     getMetadataHandler() {
@@ -1923,8 +1955,8 @@ export default class ChatRoom extends Listenable {
             { to: this.focusMucJid,
                 type: 'set' })
             .c('mute', {
-                xmlns: `http://jitsi.org/jitmeet/${mediaType}`,
-                jid
+                jid,
+                xmlns: `http://jitsi.org/jitmeet/${mediaType}`
             })
             .t(mute.toString())
             .up();
@@ -1936,7 +1968,8 @@ export default class ChatRoom extends Listenable {
     }
 
     /**
-     * TODO: Document
+     * Handle remote mute reqyest from focus.
+     *
      * @param iq
      */
     onMute(iq) {
@@ -1961,7 +1994,8 @@ export default class ChatRoom extends Listenable {
     }
 
     /**
-     * TODO: Document
+     * Handle remote video mute request from focus.
+     *
      * @param iq
      */
     onMuteVideo(iq) {
@@ -1976,6 +2010,32 @@ export default class ChatRoom extends Listenable {
 
         if (mute.length && mute.text() === 'true') {
             this.eventEmitter.emit(XMPPEvents.VIDEO_MUTED_BY_FOCUS, mute.attr('actor'));
+        } else {
+            // XXX Why do we support anything but muting? Why do we encode the
+            // value in the text of the element? Why do we use a separate XML
+            // namespace?
+            logger.warn('Ignoring a mute request which does not explicitly '
+                + 'specify a positive mute command.');
+        }
+    }
+
+    /**
+     * Handle remote desktop sharing mute request from focus.
+     *
+     * @param iq
+     */
+    onMuteDesktop(iq) {
+        const from = iq.getAttribute('from');
+
+        if (from !== this.focusMucJid) {
+            logger.warn('Ignored mute from non focus peer');
+
+            return;
+        }
+        const mute = $(iq).find('mute');
+
+        if (mute.length && mute.text() === 'true') {
+            this.eventEmitter.emit(XMPPEvents.DESKTOP_MUTED_BY_FOCUS, mute.attr('actor'));
         } else {
             // XXX Why do we support anything but muting? Why do we encode the
             // value in the text of the element? Why do we use a separate XML
@@ -2011,6 +2071,7 @@ export default class ChatRoom extends Listenable {
     leave(reason) {
         this.avModeration.dispose();
         this.breakoutRooms.dispose();
+        this.fileSharing.dispose();
         this.roomMetadata.dispose();
 
         const promises = [];
@@ -2092,13 +2153,13 @@ export default class ChatRoom extends Listenable {
 
             this.connection.sendIQ(
                 $iq({
-                    type: 'get',
-                    to: this.xmpp.options.hosts.domain
+                    to: this.xmpp.options.hosts.domain,
+                    type: 'get'
                 })
                     .c('credentials', { xmlns: 'urn:xmpp:extdisco:2' })
                     .c('service', {
-                        type: 'short-lived-token',
-                        host: service
+                        host: service,
+                        type: 'short-lived-token'
                     }),
                 res => {
                     const resultServiceEl = $(res).find('>credentials[xmlns="urn:xmpp:extdisco:2"]>service');

@@ -67,7 +67,7 @@ export default class JitsiConferenceEventManager {
                 conference.mutedByFocusActor = actor;
 
                 // set isMutedByFocus when setAudioMute Promise ends
-                conference.rtc.setAudioMute(true).then(
+                conference.rtc.setAudioMute().then(
                     () => {
                         conference.isMutedByFocus = true;
                         conference.mutedByFocusActor = null;
@@ -91,7 +91,7 @@ export default class JitsiConferenceEventManager {
                 conference.mutedVideoByFocusActor = actor;
 
                 // set isVideoMutedByFocus when setVideoMute Promise ends
-                conference.rtc.setVideoMute(true).then(
+                conference.rtc.setVideoMute().then(
                     () => {
                         conference.isVideoMutedByFocus = true;
                         conference.mutedVideoByFocusActor = null;
@@ -101,6 +101,30 @@ export default class JitsiConferenceEventManager {
                             conference.mutedVideoByFocusActor = null;
                             logger.warn(
                                 'Error while video muting due to focus request', error);
+                        });
+            }
+        );
+
+        chatRoom.addListener(XMPPEvents.DESKTOP_MUTED_BY_FOCUS,
+            actor => {
+                // TODO: Add a way to differentiate between commands which caused
+                // us to mute and those that did not change our state (i.e. we were
+                // already muted).
+                Statistics.sendAnalytics(createRemotelyMutedEvent(MediaType.DESKTOP));
+
+                conference.mutedDesktopByFocusActor = actor;
+
+                // set isDesktopMutedByFocus when setDesktopMute Promise ends
+                conference.rtc.setDesktopMute().then(
+                    () => {
+                        conference.isDesktopMutedByFocus = true;
+                        conference.mutedDesktopByFocusActor = null;
+                    })
+                    .catch(
+                        error => {
+                            conference.mutedDesktopByFocusActor = null;
+                            logger.warn(
+                                'Error while desktop video muting due to focus request', error);
                         });
             }
         );
@@ -359,12 +383,12 @@ export default class JitsiConferenceEventManager {
             XMPPEvents.PRIVATE_MESSAGE_RECEIVED,
 
             // eslint-disable-next-line max-params
-            (jid, txt, myJid, ts, messageId) => {
-                const participantId = Strophe.getResourceFromJid(jid);
+            (jid, txt, myJid, ts, messageId, displayName, isVisitor, ofrom) => {
+                const participantId = isVisitor ? ofrom : Strophe.getResourceFromJid(jid);
 
                 conference.eventEmitter.emit(
                     JitsiConferenceEvents.PRIVATE_MESSAGE_RECEIVED,
-                    participantId, txt, ts, messageId);
+                    participantId, txt, ts, messageId, displayName, isVisitor);
             });
 
         chatRoom.addListener(XMPPEvents.PRESENCE_STATUS,
@@ -401,6 +425,14 @@ export default class JitsiConferenceEventManager {
             JitsiConferenceEvents.BREAKOUT_ROOMS_MOVE_TO_ROOM);
         this.chatRoomForwarder.forward(XMPPEvents.BREAKOUT_ROOMS_UPDATED,
             JitsiConferenceEvents.BREAKOUT_ROOMS_UPDATED);
+
+        // File sharing
+        this.chatRoomForwarder.forward(XMPPEvents.FILE_SHARING_FILES_RECEIVED,
+            JitsiConferenceEvents.FILE_SHARING_FILES_RECEIVED);
+        this.chatRoomForwarder.forward(XMPPEvents.FILE_SHARING_FILE_ADDED,
+            JitsiConferenceEvents.FILE_SHARING_FILE_ADDED);
+        this.chatRoomForwarder.forward(XMPPEvents.FILE_SHARING_FILE_REMOVED,
+            JitsiConferenceEvents.FILE_SHARING_FILE_REMOVED);
 
         // Room metadata.
         chatRoom.addListener(XMPPEvents.ROOM_METADATA_UPDATED, metadata => {
@@ -560,9 +592,9 @@ export default class JitsiConferenceEventManager {
                 const actorParticipant = conference.getParticipants().find(p => p.getJid() === actorJid);
 
                 conference.eventEmitter.emit(JitsiConferenceEvents.AV_MODERATION_CHANGED, {
+                    actor: actorParticipant,
                     enabled: value,
-                    mediaType,
-                    actor: actorParticipant
+                    mediaType
                 });
             });
         this._addConferenceXMPPListener(XMPPEvents.AV_MODERATION_PARTICIPANT_APPROVED,
@@ -571,8 +603,8 @@ export default class JitsiConferenceEventManager {
 
                 if (participant) {
                     conference.eventEmitter.emit(JitsiConferenceEvents.AV_MODERATION_PARTICIPANT_APPROVED, {
-                        participant,
-                        mediaType
+                        mediaType,
+                        participant
                     });
                 }
             });
@@ -582,8 +614,8 @@ export default class JitsiConferenceEventManager {
 
                 if (participant) {
                     conference.eventEmitter.emit(JitsiConferenceEvents.AV_MODERATION_PARTICIPANT_REJECTED, {
-                        participant,
-                        mediaType
+                        mediaType,
+                        participant
                     });
                 }
             });

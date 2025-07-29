@@ -264,9 +264,9 @@ export class TPCUtils {
                     active: this.pc.videoTransferActive,
                     maxBitrate: effectiveBitrates[2],
                     rid: SIM_LAYERS[0].rid,
-                    scaleResolutionDownBy: effectiveScaleFactors[2],
                     scalabilityMode: this.codecSettings[codec].useKSVC
-                        ? VideoEncoderScalabilityMode.L3T3_KEY : VideoEncoderScalabilityMode.L3T3
+                        ? VideoEncoderScalabilityMode.L3T3_KEY : VideoEncoderScalabilityMode.L3T3,
+                    scaleResolutionDownBy: effectiveScaleFactors[2]
                 },
                 {
                     active: false,
@@ -410,8 +410,13 @@ export class TPCUtils {
      * @returns {Array<VideoEncoderScalabilityMode> | undefined}
      */
     calculateEncodingsScalabilityMode(localVideoTrack, codec, maxHeight) {
-        if (!this.pc.isSpatialScalabilityOn() || !this.codecSettings[codec].scalabilityModeEnabled) {
+        if (!this.codecSettings[codec].scalabilityModeEnabled) {
             return;
+        }
+
+        // Use LIT3 for P2P wherever its supported.
+        if (!this.pc.isSpatialScalabilityOn()) {
+            return [ VideoEncoderScalabilityMode.L1T3 ];
         }
 
         // Default modes for simulcast.
@@ -495,8 +500,8 @@ export class TPCUtils {
         });
 
         return {
-            type: description.type,
-            sdp: transform.write(parsedSdp)
+            sdp: transform.write(parsedSdp),
+            type: description.type
         };
     }
 
@@ -638,8 +643,8 @@ export class TPCUtils {
         }
 
         return {
-            type: desc.type,
-            sdp: transform.write(sdp)
+            sdp: transform.write(sdp),
+            type: desc.type
         };
     }
 
@@ -660,16 +665,16 @@ export class TPCUtils {
         }
         const rids = [
             {
-                id: SIM_LAYERS[0].rid,
-                direction: 'recv'
+                direction: 'recv',
+                id: SIM_LAYERS[0].rid
             },
             {
-                id: SIM_LAYERS[1].rid,
-                direction: 'recv'
+                direction: 'recv',
+                id: SIM_LAYERS[1].rid
             },
             {
-                id: SIM_LAYERS[2].rid,
-                direction: 'recv'
+                direction: 'recv',
+                id: SIM_LAYERS[2].rid
             }
         ];
 
@@ -700,8 +705,8 @@ export class TPCUtils {
         });
 
         return {
-            type: desc.type,
-            sdp: transform.write(sdp)
+            sdp: transform.write(sdp),
+            type: desc.type
         };
     }
 
@@ -815,8 +820,8 @@ export class TPCUtils {
 
             if (!fmtpOpus) {
                 fmtpOpus = {
-                    payload,
-                    config: ''
+                    config: '',
+                    payload
                 };
             }
 
@@ -904,8 +909,8 @@ export class TPCUtils {
                 // Use only the highest spatial layer bitrates for now as there is no API available yet for configuring
                 // the bitrates on the individual SVC layers.
                 mLine.bandwidth = [ {
-                    type: 'AS',
-                    limit
+                    limit,
+                    type: 'AS'
                 } ];
             } else {
                 // Clear the bandwidth limit in SDP when VP9 is no longer the preferred codec.

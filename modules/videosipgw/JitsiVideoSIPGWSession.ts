@@ -51,6 +51,38 @@ export default class JitsiVideoSIPGWSession extends Listenable {
     }
 
     /**
+     * Sends a jibri command using an iq.
+     *
+     * @private
+     * @param {string} action - The action to send ('start' or 'stop').
+     */
+    private _sendJibriIQ(action: string): void {
+        const attributes = {
+            'action': action,
+            'displayname': this.displayName,
+            'sipaddress': this.sipAddress,
+            'xmlns': 'http://jitsi.org/protocol/jibri'
+        };
+
+        const iq = $iq({
+            to: this.chatRoom.focusMucJid,
+            type: 'set' })
+            .c('jibri', attributes)
+            .up();
+
+        logger.debug(`${action} video SIP GW session`, iq.nodeTree);
+        this.chatRoom.connection.sendIQ(
+            iq,
+            () => {}, // eslint-disable-line @typescript-eslint/no-empty-function
+            (error: any) => {
+                logger.error(
+                    `Failed to ${action} video SIP GW session, error: `, error);
+                this.setState(VideoSIPGWConstants.STATE_FAILED);
+            },
+            undefined);
+    }
+
+    /**
      * Stops the current session.
      */
     stop(): void {
@@ -101,10 +133,10 @@ export default class JitsiVideoSIPGWSession extends Listenable {
         this.eventEmitter.emit(STATE_CHANGED,
             {
                 address: this.sipAddress,
+                displayName: this.displayName,
                 failureReason,
-                oldState,
                 newState: this.state,
-                displayName: this.displayName
+                oldState
             }
         );
     }
@@ -126,37 +158,5 @@ export default class JitsiVideoSIPGWSession extends Listenable {
      */
     removeStateListener(listener: EventListener): void {
         this.removeListener(STATE_CHANGED, listener);
-    }
-
-    /**
-     * Sends a jibri command using an iq.
-     *
-     * @private
-     * @param {string} action - The action to send ('start' or 'stop').
-     */
-    private _sendJibriIQ(action: string): void {
-        const attributes = {
-            'xmlns': 'http://jitsi.org/protocol/jibri',
-            'action': action,
-            'sipaddress': this.sipAddress,
-            'displayname': this.displayName
-        };
-
-        const iq = $iq({
-            to: this.chatRoom.focusMucJid,
-            type: 'set' })
-            .c('jibri', attributes)
-            .up();
-
-        logger.debug(`${action} video SIP GW session`, iq.nodeTree);
-        this.chatRoom.connection.sendIQ(
-            iq,
-            () => {}, // eslint-disable-line @typescript-eslint/no-empty-function
-            (error: any) => {
-                logger.error(
-                    `Failed to ${action} video SIP GW session, error: `, error);
-                this.setState(VideoSIPGWConstants.STATE_FAILED);
-            },
-            undefined);
     }
 }

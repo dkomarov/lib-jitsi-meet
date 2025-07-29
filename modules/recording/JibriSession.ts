@@ -2,7 +2,7 @@ import { $iq } from 'strophe.js';
 
 import JitsiParticipant from '../../JitsiParticipant';
 
-import recordingXMLUtils from './recordingXMLUtils';
+import { getSessionIdFromIq } from './recordingXMLUtils';
 
 export interface IJibriSessionOptions {
     connection?: any;
@@ -229,14 +229,14 @@ export default class JibriSession {
                 this._createIQ({
                     action: 'start',
                     appData,
-                    focusMucJid,
                     broadcastId,
+                    focusMucJid,
                     streamId
                 }),
                 (result: any) => {
                     this.setStatus('pending');
                     this._setSessionID(
-                        recordingXMLUtils.getSessionIdFromIq(result)
+                        getSessionIdFromIq(result)
                     );
 
                     resolve();
@@ -294,11 +294,11 @@ export default class JibriSession {
             type: 'set'
         })
         .c('jibri', {
-            'xmlns': 'http://jitsi.org/protocol/jibri',
             'action': action,
             'app_data': appData,
             'recording_mode': this._mode,
             'streamid': streamId,
+            'xmlns': 'http://jitsi.org/protocol/jibri',
             'you_tube_broadcast_id': broadcastId
         })
         .up();

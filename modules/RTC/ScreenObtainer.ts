@@ -266,6 +266,7 @@ class ScreenObtainer {
 
         // @ts-ignore TODO: legacy flow, remove after the Electron SDK supporting gDM has been out for a while.
         if (
+            // @ts-ignore
             typeof window.JitsiMeetScreenObtainer?.openDesktopPicker ===
             "function"
         ) {

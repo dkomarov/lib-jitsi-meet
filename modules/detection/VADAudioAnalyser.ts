@@ -1,14 +1,14 @@
 import { getLogger } from '@jitsi/logger';
 
 import JitsiConference from '../../JitsiConference';
-import * as JitsiConferenceEvents from '../../JitsiConferenceEvents';
+import { JitsiConferenceEvents } from '../../JitsiConferenceEvents';
 import JitsiLocalTrack from '../RTC/JitsiLocalTrack';
 import EventEmitter from '../util/EventEmitter';
 
-import { DETECTOR_STATE_CHANGE, VAD_SCORE_PUBLISHED } from './DetectionEvents';
+import { DetectionEvents } from './DetectionEvents';
 import TrackVADEmitter from './TrackVADEmitter';
 
-const logger = getLogger('modules/detection/VADAudioAnalyser');
+const logger = getLogger('vad:VADAudioAnalyser');
 
 /**
  * Sample rate of TrackVADEmitter, it defines how many audio samples are processed at a time.
@@ -43,7 +43,7 @@ export interface IVADScore {
  */
 export default class VADAudioAnalyser extends EventEmitter {
     private _createVADProcessor: () => IVADProcessor;
-    private _vadEmitter: TrackVADEmitter | null;
+    private _vadEmitter: Nullable<TrackVADEmitter>;
     private _isVADEmitterRunning: boolean;
     private _detectionServices: IVADDetectionService[];
     private _vadInitTracker: Promise<void>;
@@ -108,7 +108,7 @@ export default class VADAudioAnalyser extends EventEmitter {
      */
     addVADDetectionService(vadService: IVADDetectionService): void {
         this._detectionServices.push(vadService);
-        vadService.on(DETECTOR_STATE_CHANGE, () => {
+        vadService.on(DetectionEvents.DETECTOR_STATE_CHANGE, () => {
             // When the state of a detector changes check if there are any active detectors attached so that
             // the _vadEmitter doesn't run needlessly.
             const activeDetector = this._detectionServices.filter(detector => detector.isActive() === true);
@@ -130,7 +130,7 @@ export default class VADAudioAnalyser extends EventEmitter {
      */
     _startVADEmitter(): void {
         if (this._vadEmitter) {
-            this._vadEmitter.on(VAD_SCORE_PUBLISHED, this._processVADScore);
+            this._vadEmitter.on(DetectionEvents.VAD_SCORE_PUBLISHED, this._processVADScore);
             this._vadEmitter.start();
             this._isVADEmitterRunning = true;
         }
@@ -142,7 +142,7 @@ export default class VADAudioAnalyser extends EventEmitter {
      */
     _stopVADEmitter(): void {
         if (this._vadEmitter) {
-            this._vadEmitter.removeListener(VAD_SCORE_PUBLISHED, this._processVADScore);
+            this._vadEmitter.removeListener(DetectionEvents.VAD_SCORE_PUBLISHED, this._processVADScore);
             this._vadEmitter.stop();
         }
         this._isVADEmitterRunning = false;

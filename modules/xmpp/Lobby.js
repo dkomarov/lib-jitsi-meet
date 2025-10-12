@@ -3,7 +3,9 @@ import { $msg, Strophe } from 'strophe.js';
 
 import { XMPPEvents } from '../../service/xmpp/XMPPEvents';
 
-const logger = getLogger('modules/xmpp/Lobby');
+import { handleStropheError } from './StropheErrorHandler';
+
+const logger = getLogger('xmpp:Lobby');
 
 /**
  * The command type for updating a lobby participant's e-mail address.
@@ -455,7 +457,12 @@ export default class Lobby {
             this.xmpp.connection.sendIQ(msgToSend,
                 () => { }, // eslint-disable-line no-empty-function
                 e => {
-                    logger.error(`Error sending invite for ${membersToApprove}`, e);
+                    handleStropheError(e, {
+                        membersToApprove,
+                        operation: 'lobby approve members',
+                        roomJid: this.lobbyRoom,
+                        userJid: this.xmpp.connection.jid
+                    });
                 });
         }
     }

@@ -6,13 +6,15 @@ import { CONFERENCE_REQUEST_FAILED, NOT_LIVE_ERROR } from '../../JitsiConnection
 import { CONNECTION_FAILED, CONNECTION_REDIRECTED } from '../../JitsiConnectionEvents';
 import Settings from '../settings/Settings';
 import Listenable from '../util/Listenable';
-import $ from '../util/XMLParser';
+import { exists, findFirst, getAttribute, getText } from '../util/XMLUtils';
+
+import { handleStropheError } from './StropheErrorHandler';
 
 const AuthenticationEvents
     = require('../../service/authentication/AuthenticationEvents');
 const { XMPPEvents } = require('../../service/xmpp/XMPPEvents');
 
-const logger = getLogger('modules/xmpp/moderator');
+const logger = getLogger('xmpp:Moderator');
 
 /**
  * Exponential backoff timer.
@@ -57,6 +59,10 @@ export default class Moderator extends Listenable {
         // Whether SIP gateway (jigasi) support is enabled. TODO: use presence so it can be changed based on jigasi
         // availability.
         this.sipGatewayEnabled = false;
+
+        // Response to conference request may contain whether visitors are supported
+        // in certain cases we need to know this to be able to get decisions on some errors (max-occupants reached)
+        this.visitorsSupported = false;
 
         this.xmpp = xmpp;
         this.connection = xmpp.connection;
@@ -249,37 +255,29 @@ export default class Moderator extends Listenable {
     _parseConferenceIq(resultIq) {
         const conferenceRequest = { properties: {} };
 
-        conferenceRequest.focusJid = $(resultIq)
-            .find('conference')
-            .attr('focusjid');
-        conferenceRequest.sessionId = $(resultIq)
-            .find('conference')
-            .attr('session-id');
-        conferenceRequest.identity = $(resultIq)
-            .find('>conference')
-            .attr('identity');
-        conferenceRequest.ready = $(resultIq)
-            .find('conference')
-            .attr('ready') === 'true';
-        conferenceRequest.vnode = $(resultIq)
-            .find('conference')
-            .attr('vnode');
+        const conferenceEl = findFirst(resultIq, 'conference');
 
-        if ($(resultIq).find('>conference>property[name=\'authentication\'][value=\'true\']').length > 0) {
+        conferenceRequest.focusJid = getAttribute(conferenceEl, 'focusjid');
+        conferenceRequest.sessionId = getAttribute(conferenceEl, 'session-id');
+        conferenceRequest.identity = getAttribute(conferenceEl, 'identity');
+        conferenceRequest.ready = getAttribute(conferenceEl, 'ready') === 'true';
+        conferenceRequest.vnode = getAttribute(conferenceEl, 'vnode');
+
+        if (exists(resultIq, ':scope>conference>property[name="authentication"][value="true"]')) {
             conferenceRequest.properties.authentication = 'true';
         }
 
-        if ($(resultIq).find('>conference>property[name=\'externalAuth\'][value=\'true\']').length > 0) {
+        if (exists(resultIq, ':scope>conference>property[name="externalAuth"][value="true"]')) {
             conferenceRequest.properties.externalAuth = 'true';
         }
 
         // Check if jicofo has jigasi support enabled.
-        if ($(resultIq).find('>conference>property[name=\'sipGatewayEnabled\'][value=\'true\']').length > 0) {
+        if (exists(resultIq, ':scope>conference>property[name="sipGatewayEnabled"][value="true"]')) {
             conferenceRequest.properties.sipGatewayEnabled = 'true';
         }
 
         // check for explicit false, all other cases is considered live
-        if ($(resultIq).find('>conference>property[name=\'live\'][value=\'false\']').length > 0) {
+        if (exists(resultIq, ':scope>conference>property[name="live"][value="false"]')) {
             conferenceRequest.properties.live = 'false';
         }
 
@@ -413,6 +411,8 @@ export default class Moderator extends Listenable {
             return;
         }
 
+        this.visitorsSupported = conferenceRequest.properties['visitors-supported'];
+
         if (conferenceRequest.ready) {
             // Reset the non-error timeout (because we've succeeded here).
             this.getNextTimeout(true);
@@ -507,18 +507,28 @@ export default class Moderator extends Listenable {
      * @param errorCallback
      */
     _handleIqError(roomJid, error, callback, errorCallback) {
+        // Call handleStropheError for centralized error logging and analytics
+        handleStropheError(error, {
+            mode: this.mode,
+            operation: 'conference request (IQ)',
+            roomJid,
+            targetJid: this.targetJid,
+            userJid: this.connection.jid
+        });
+
         // The reservation system only works over XMPP. Handle the error separately.
         // Check for error returned by the reservation system
-        const reservationErr = $(error).find('>error>reservation-error');
+        // Convert Strophe object to DOM element for XMLUtils functions
+        const reservationErr = findFirst(error, ':scope>error>reservation-error');
 
-        if (reservationErr.length) {
+        if (reservationErr) {
             // Trigger error event
-            const errorCode = reservationErr.attr('error-code');
-            const errorTextNode = $(error).find('>error>text');
+            const errorCode = getAttribute(reservationErr, 'error-code');
+            const errorTextNode = findFirst(error, ':scope>error>text');
             let errorMsg;
 
             if (errorTextNode) {
-                errorMsg = errorTextNode.text();
+                errorMsg = getText(errorTextNode);
             }
             this.eventEmitter.emit(
                 XMPPEvents.RESERVATION_ERROR,
@@ -530,11 +540,11 @@ export default class Moderator extends Listenable {
             return;
         }
 
-        const invalidSession = Boolean($(error).find('>error>session-invalid').length
-                || $(error).find('>error>not-acceptable').length);
+        const invalidSession = Boolean(
+            exists(error, ':scope>error>session-invalid') || exists(error, ':scope>error>not-acceptable'));
 
         // Not authorized to create new room
-        const notAuthorized = $(error).find('>error>not-authorized').length > 0;
+        const notAuthorized = exists(error, ':scope>error>not-authorized');
 
         this._handleError(roomJid, invalidSession, notAuthorized, callback, errorCallback);
     }
@@ -566,9 +576,7 @@ export default class Moderator extends Listenable {
             this.connection.sendIQ(
                 this._createConferenceIq(roomJid),
                 result => {
-                    const sessionId = $(result)
-                        .find('conference')
-                        .attr('session-id');
+                    const sessionId = getAttribute(findFirst(result, 'conference'), 'session-id');
 
                     if (sessionId) {
                         logger.info(`Received sessionId:  ${sessionId}`);
@@ -579,14 +587,22 @@ export default class Moderator extends Listenable {
 
                     resolve();
                 },
-                errorIq => reject({
-                    error: $(errorIq)
-                        .find('iq>error :first')
-                        .prop('tagName'),
-                    message: $(errorIq)
-                        .find('iq>error>text')
-                        .text()
-                })
+                errorIq => {
+                    handleStropheError(errorIq, {
+                        operation: 'authenticate conference',
+                        roomJid,
+                        targetJid: this.targetJid,
+                        userJid: this.connection.jid
+                    });
+
+                    const errorEl = findFirst(errorIq, ':scope>iq>error');
+                    const firstErrorChild = errorEl?.children?.length > 0 ? errorEl.children[0] : undefined;
+
+                    reject({
+                        error: firstErrorChild?.tagName,
+                        message: getText(findFirst(errorIq, ':scope>iq>error>text'))
+                    });
+                }
             );
         });
     }
@@ -619,7 +635,12 @@ export default class Moderator extends Listenable {
                 callback();
             },
             error => {
-                logger.error('Logout error', error);
+                handleStropheError(error, {
+                    operation: 'logout',
+                    sessionId,
+                    targetJid: this.targetJid,
+                    userJid: this.connection.jid
+                });
             }
         );
     }

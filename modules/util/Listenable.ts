@@ -6,11 +6,13 @@ import EventEmitter, { EventListener } from './EventEmitter';
  * this functionality to other classes.
  */
 export default class Listenable {
-    public eventEmitter: EventEmitter;
+    /**
+     * @internal
+     */
+    eventEmitter: EventEmitter;
 
     /**
      * Creates new instance.
-     * @constructor
      */
     constructor() {
         this.eventEmitter = new EventEmitter();
@@ -23,9 +25,7 @@ export default class Listenable {
    * @param {Function} handler - Handler for the event.
    */
     on(eventId: string, handler: EventListener): void {
-        if (this.eventEmitter) {
-            this.eventEmitter.on(eventId, handler);
-        }
+        this.eventEmitter.on(eventId, handler);
     }
 
     /**
@@ -34,9 +34,16 @@ export default class Listenable {
    * @param {Function} [handler] - Optional, the specific handler to unbind.
    */
     off(eventId: string, handler?: EventListener): void {
-        if (this.eventEmitter) {
-            this.eventEmitter.removeListener(eventId, handler);
-        }
+        this.eventEmitter.removeListener(eventId, handler);
+    }
+
+    /**
+   * Adds a one-time listener function for the event.
+   * @param {string} eventId - The event ID.
+   * @param {Function} handler - Handler for the event.
+   */
+    once(eventId: string, handler: EventListener): void {
+        this.eventEmitter.once(eventId, handler);
     }
 
     /**

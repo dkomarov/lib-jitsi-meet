@@ -9,7 +9,7 @@ import JitsiLocalTrack from '../RTC/JitsiLocalTrack';
 import browser from '../browser';
 import JingleSessionPC from '../xmpp/JingleSessionPC';
 
-const logger = getLogger('modules/qualitycontrol/CodecSelection');
+const logger = getLogger('qc:CodecSelection');
 
 // Default video codec preferences on mobile and desktop endpoints.
 const DESKTOP_VIDEO_CODEC_ORDER = [ CodecMimeType.AV1, CodecMimeType.VP9, CodecMimeType.VP8, CodecMimeType.H264 ];
@@ -163,10 +163,10 @@ export class CodecSelection {
     /**
      * Returns the preferred screenshare codec for the given connection type.
      *
-     * @param {String} connectionType The media connection type, 'p2p' or 'jvb'.
+     * @param {Optional} connectionType The media connection type, 'p2p' or 'jvb'.
      * @returns CodecMimeType
      */
-    getScreenshareCodec(connectionType: string): string | undefined {
+    getScreenshareCodec(connectionType: string): Optional<string> {
         return this.screenshareCodec[connectionType];
     }
 

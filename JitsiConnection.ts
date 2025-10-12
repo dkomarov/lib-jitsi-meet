@@ -7,11 +7,11 @@ import FeatureFlags from './modules/flags/FeatureFlags';
 import Statistics from './modules/statistics/statistics';
 import XMPP from './modules/xmpp/xmpp';
 import {
-    CONNECTION_DISCONNECTED as ANALYTICS_CONNECTION_DISCONNECTED,
+    AnalyticsEvents,
     createConnectionFailedEvent
 } from './service/statistics/AnalyticsEvents';
 
-const logger = getLogger('JitsiConnection');
+const logger = getLogger('core:JitsiConnection');
 
 export interface IConnectionOptions {
     analytics?: any;
@@ -29,7 +29,7 @@ export interface IConnectionOptions {
     p2pStunServers: any[];
     serviceUrl: string;
     websocketKeepAlive?: number;
-    websocketKeepAliveUrl?: number;
+    websocketKeepAliveUrl?: string;
     xmppPing?: any;
 }
 
@@ -61,7 +61,7 @@ export default class JitsiConnection {
      * @param token - The JWT token used to authenticate with the server (optional).
      * @param options - Object with properties / settings related to connection with the server.
      */
-    constructor(appID: string, token: string | null, options: IConnectionOptions) {
+    constructor(appID: string, token: Nullable<string>, options: IConnectionOptions) {
         this.appID = appID;
         this.token = token;
         this.options = options;
@@ -86,7 +86,7 @@ export default class JitsiConnection {
                 // analytics event here?
                 if (msg) {
                     Statistics.sendAnalytics(
-                        ANALYTICS_CONNECTION_DISCONNECTED,
+                        AnalyticsEvents.CONNECTION_DISCONNECTED,
                         { message: msg });
                 }
             });
@@ -135,7 +135,7 @@ export default class JitsiConnection {
      * @param args - Optional arguments to be passed to XMPP.disconnect
      * @returns Promise that resolves when the disconnect process is finished or rejects with an error.
      */
-    disconnect(...args: [string?]): Promise<void> {
+    disconnect(...args: any): boolean | Promise<void> {
         // XXX Forward any arguments passed to JitsiConnection.disconnect to
         // XMPP.disconnect. For example, the caller of JitsiConnection.disconnect
         // may optionally pass the event which triggered the disconnect in order to
@@ -168,7 +168,7 @@ export default class JitsiConnection {
      * that will be created.
      * @returns The new conference object.
      */
-    initJitsiConference(name: string | null, options: Record<string, any>): JitsiConference {
+    initJitsiConference(name: Nullable<string>, options: Record<string, any>): JitsiConference {
         return new JitsiConference({
             config: options,
             connection: this,

@@ -6,9 +6,9 @@ import { MediaType } from '../../service/RTC/MediaType';
 import { SSRC_GROUP_SEMANTICS } from '../../service/RTC/StandardVideoQualitySettings';
 import { VideoType } from '../../service/RTC/VideoType';
 import { XEP } from '../../service/xmpp/XMPPExtensioProtocols';
-import $ from '../util/XMLParser';
+import { findFirst } from '../util/XMLUtils';
 
-const logger = getLogger('modules/xmpp/JingleHelperFunctions');
+const logger = getLogger('xmpp:JingleHelperFunctions');
 
 export interface ISourceCompactJson {
     m?: string;
@@ -91,25 +91,20 @@ function _createSsrcGroupExtension(ssrcGroupCompactJson: ICompactSsrcGroup): Nod
  * @returns the RTP description element with the given media type.
  */
 function _getOrCreateRtpDescription(iq: Element, mediaType: string): Element {
-    const jingle = $(iq).find('jingle')[0];
-    let content = $(jingle).find(`content[name="${mediaType}"]`);
-    let description: Element;
+    const jingle = findFirst(iq, 'jingle');
+    let content = findFirst(jingle, `:scope>content[name="${mediaType}"]`);
 
-    if (content.length) {
-        content = content[0];
-    } else {
-        // I'm not suree if "creator" and "senders" are required.
+    if (!content) {
+        // I'm not sure if "creator" and "senders" are required.
         content = $build('content', {
             name: mediaType
         }).node;
-        jingle.appendChild(content);
+        jingle?.appendChild(content);
     }
 
-    const descriptionElements = $(content).find('description');
+    let description = findFirst(content, 'description');
 
-    if (descriptionElements.length) {
-        description = descriptionElements[0];
-    } else {
+    if (!description) {
         description = $build('description', {
             media: mediaType,
             xmlns: XEP.RTP_MEDIA
@@ -126,7 +121,7 @@ function _getOrCreateRtpDescription(iq: Element, mediaType: string): Element {
  * @param {*} str the compact JSON format representation of an SSRC group's semantics.
  * @returns the SSRC group semantics corresponding to [str].
  */
-function _getSemantics(str: string): string | null {
+function _getSemantics(str: string): Nullable<string> {
     if (str === 'f') {
         return SSRC_GROUP_SEMANTICS.FID;
     } else if (str === 's') {
@@ -148,7 +143,7 @@ function _getSemantics(str: string): string | null {
  * @returns {Map<string, Array<string>} The audio and video ssrcs extracted from the JSON-encoded message with remote
  * endpoint id as the key.
  */
-export function expandSourcesFromJson(iq: Element, jsonMessageXml: Element): Map<string, string[]> | null {
+export function expandSourcesFromJson(iq: Element, jsonMessageXml: Element): Nullable<Map<string, string[]>> {
     let json: any;
 
     try {

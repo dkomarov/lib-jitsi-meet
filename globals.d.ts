@@ -3,7 +3,7 @@ export {};
 declare global {
     type Timeout = ReturnType<typeof setTimeout>;
     interface Window {
-                JitsiMeetJS?: {
+        JitsiMeetJS?: {
             app?: {
                 connectionTimes?: Record<string, any>;
             };
@@ -15,5 +15,8 @@ declare global {
             readable: ReadableStream<RTCEncodedAudioFrame | RTCEncodedVideoFrame>;
             writable: WritableStream<RTCEncodedAudioFrame | RTCEncodedVideoFrame>;
         }
+    }
+    interface MediaStream {
+        oninactive?: ((this: MediaStream, ev: Event) => void) | ((this: MediaStreamTrack, ev: Event) => void) | null;
     }
 }

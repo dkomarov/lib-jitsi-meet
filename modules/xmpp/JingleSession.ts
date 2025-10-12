@@ -11,7 +11,7 @@ import { JingleSessionState } from './JingleSessionState';
 import SignalingLayerImpl from './SignalingLayerImpl';
 import XmppConnection from './XmppConnection';
 
-const logger = getLogger('modules/xmpp/JingleSession');
+const logger = getLogger('xmpp:JingleSession');
 
 /**
  * JingleSession provides an API to manage a single Jingle session. We will
@@ -23,7 +23,7 @@ export default class JingleSession extends Listenable {
      * The signaling layer.
      * @internal
      */
-    _signalingLayer: SignalingLayerImpl | null;
+    _signalingLayer: Nullable<SignalingLayerImpl>;
 
     /**
      * The Jingle session identifier.
@@ -70,23 +70,25 @@ export default class JingleSession extends Listenable {
     /**
      *  When dripping is used, stores ICE candidates which are to be sent.
      */
-    public dripContainer: unknown[];
+    public dripContainer: RTCIceCandidate[];
 
     /**
      * The chat room instance associated with the session.
+     * @internal
      */
-    public room: ChatRoom | null;
+    room: Nullable<ChatRoom>;
 
     /**
      * Jingle session state - uninitialized until {@link initialize} is
      * called
      */
-    public state: JingleSessionState | null;
+    public state: Nullable<JingleSessionState>;
 
     /**
      * The RTC service instance
+     * @internal
      */
-    public rtc: RTC | null;
+    rtc: Nullable<RTC>;
 
     /**
      * Creates new <tt>JingleSession</tt>.
@@ -141,7 +143,7 @@ export default class JingleSession extends Listenable {
 
         /**
          * The signaling layer.
-         * @type {SignalingLayerImpl | null}
+         * @type {Nullable<SignalingLayerImpl>}
          * @internal
          */
         this._signalingLayer = null;
@@ -226,9 +228,9 @@ export default class JingleSession extends Listenable {
 
     /**
      * Returns current state of this <tt>JingleSession</tt> instance.
-     * @returns {JingleSessionState} the current state of this session instance.
+     * @returns {Nullable<JingleSessionState>} the current state of this session instance.
      */
-    public getState(): JingleSessionState | null {
+    public getState(): Nullable<JingleSessionState> {
         return this.state;
     }
 
@@ -262,8 +264,8 @@ export default class JingleSession extends Listenable {
      * connection has been closed already or if the remote peer has disconnected
      */
     public terminate(
-            success: (() => void) | undefined,
-            failure: (() => void) | undefined,
+            success: Optional<(() => void)>,
+            failure: Optional<(() => void)>,
             options: {
                 reason?: string;
                 reasonDescription?: string;
@@ -283,8 +285,8 @@ export default class JingleSession extends Listenable {
      */
     public acceptOffer(
             jingle: unknown,
-            success: (() => void) | undefined,
-            failure: ((error: unknown) => void) | undefined
+            success: Optional<(() => void)>,
+            failure: Optional<((error: unknown) => void)>
     ): void {}
 }
 

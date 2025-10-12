@@ -1,11 +1,11 @@
 import { getLogger } from '@jitsi/logger';
 
 import JitsiConference from '../../JitsiConference';
-import * as JitsiConferenceEvents from '../../JitsiConferenceEvents';
+import { JitsiConferenceEvents } from '../../JitsiConferenceEvents';
 import JitsiParticipant from '../../JitsiParticipant';
-import * as JitsiE2EPingEvents from '../../service/e2eping/E2ePingEvents';
+import { E2ePingEvents } from '../../service/e2eping/E2ePingEvents';
 
-const logger = getLogger('modules/e2eping/e2eping');
+const logger = getLogger('e2eping');
 
 /**
  * The 'type' of a message which designates an e2e ping request.
@@ -64,7 +64,7 @@ class ParticipantWrapper {
     id: string;
     requests: { [key: number]: IRequest; };
     lastRequestId: number;
-    timeout: number | null;
+    timeout: Nullable<number>;
 
     /**
      * Creates a ParticipantWrapper
@@ -191,7 +191,7 @@ class ParticipantWrapper {
             this.stop();
 
             this.e2eping.conference.eventEmitter.emit(
-                JitsiE2EPingEvents.E2E_RTT_CHANGED, this.participant, rtt);
+                E2ePingEvents.E2E_RTT_CHANGED, this.participant, rtt);
 
             return;
         } else if (totalNumRequests > 2 * this.e2eping.numRequests) {

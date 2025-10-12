@@ -1,9 +1,11 @@
 import { Strophe } from 'strophe.js';
 
 import JitsiConference from './JitsiConference';
-import * as JitsiConferenceEvents from './JitsiConferenceEvents';
+import { JitsiConferenceEvents } from './JitsiConferenceEvents';
 import JitsiRemoteTrack from './modules/RTC/JitsiRemoteTrack';
 import { MediaType } from './service/RTC/MediaType';
+import { SourceName } from './service/RTC/SignalingLayer';
+import { VideoType } from './service/RTC/VideoType';
 
 export interface ISourceInfo {
     muted: boolean;
@@ -19,7 +21,6 @@ export default class JitsiParticipant {
     private _id: string;
     private _conference: JitsiConference;
     private _role: string;
-    private _status?: string;
     private _hidden: boolean;
     private _statsID?: string;
     private _properties: Map<string, any>;
@@ -31,6 +32,10 @@ export default class JitsiParticipant {
     private _sources: Map<MediaType, Map<string, ISourceInfo>>;
     private _botType?: string;
     private _connectionJid?: string;
+    /**
+     * @internal
+     */
+    _status?: string;
     /**
      * @internal
      */
@@ -49,7 +54,6 @@ export default class JitsiParticipant {
     /**
      * Initializes a new JitsiParticipant instance.
      *
-     * @constructor
      * @param jid the conference XMPP jid
      * @param conference
      * @param displayName
@@ -125,11 +129,11 @@ export default class JitsiParticipant {
      * Sets source info.
      * @param {MediaType} mediaType The media type, 'audio' or 'video'.
      * @param {boolean} muted The new muted state.
-     * @param {string} sourceName The name of the source.
+     * @param {SourceName} sourceName The name of the source.
      * @param {string} videoType The video type of the source.
      * @returns {void}
      */
-    _setSources(mediaType: MediaType, muted: boolean, sourceName: string, videoType: string): void {
+    _setSources(mediaType: MediaType, muted: boolean, sourceName: SourceName, videoType: VideoType): void {
         let sourceByMediaType = this._sources.get(mediaType);
         const sourceInfo: ISourceInfo = {
             muted,
@@ -150,9 +154,9 @@ export default class JitsiParticipant {
     /**
      * Returns the bot type for the participant.
      *
-     * @returns {string|undefined} - The bot type of the participant.
+     * @returns {Optional<string>} - The bot type of the participant.
      */
-    getBotType(): string | undefined {
+    getBotType(): Optional<string> {
         return this._botType;
     }
 
@@ -167,9 +171,9 @@ export default class JitsiParticipant {
     /**
      * Returns the connection jid for the participant.
      *
-     * @returns {string|undefined} - The connection jid of the participant.
+     * @returns {Optional<string>} - The connection jid of the participant.
      */
-    getConnectionJid(): string | undefined {
+    getConnectionJid(): Optional<string> {
         return this._connectionJid;
     }
 
@@ -199,9 +203,9 @@ export default class JitsiParticipant {
      * Returns the XMPP identity. This is defined by your application in the
      * JWT `context` claims section.
      *
-     * @returns {object|undefined} - XMPP user identity.
+     * @returns {Optional<object>} - XMPP user identity.
      */
-    getIdentity(): object | undefined {
+    getIdentity(): Optional<object> {
         return this._identity;
     }
 
@@ -388,8 +392,8 @@ export default class JitsiParticipant {
     /**
      * Sets the value of a property of this participant, and fires an event if
      * the value has changed.
-     * @name the name of the property.
-     * @value the value to set.
+     * @param {string} name the name of the property.
+     * @param {any} value the value to set.
      */
     setProperty(name: string, value: any): void {
         const oldValue = this._properties.get(name);

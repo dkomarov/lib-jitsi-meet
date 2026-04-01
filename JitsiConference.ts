@@ -675,6 +675,13 @@ export default class JitsiConference extends Listenable {
             this._onIceConnectionRestored
         );
 
+        this._onP2PTerminationRequired =
+            this._onP2PTerminationRequired.bind(this);
+        this.room.addListener(
+            XMPPEvents.P2P_TERMINATION_REQUIRED,
+            this._onP2PTerminationRequired
+        );
+
         this._updateProperties = this._updateProperties.bind(this);
         this.room.addListener(
             XMPPEvents.CONFERENCE_PROPERTIES_CHANGED,
@@ -2225,6 +2232,28 @@ export default class JitsiConference extends Listenable {
     }
 
     /**
+     * Handles P2P_TERMINATION_REQUIRED event. Fired when a source-remove is detected on a P2P connection, which
+     * indicates that the browser has regenerated SSRCs for an existing source. The P2P session is stopped so the
+     * call falls back to JVB.
+     *
+     * @param {JingleSessionPC} session - The P2P Jingle session.
+     * @private
+     */
+    private _onP2PTerminationRequired(session: JingleSessionPC): void {
+        if (session !== this.p2pJingleSession) {
+            return;
+        }
+
+        logger.warn(
+            "Stopping P2P session due to SSRC regeneration on P2P connection"
+        );
+        this._stopP2PSession({
+            reason: "connectivity-error",
+            reasonDescription: "P2P SSRC regeneration",
+        });
+    }
+
+    /**
      * Handles CONNECTION_RESTORED event.
      * @param {JingleSessionPC} session - The Jingle session.
      * @private
@@ -3084,6 +3113,10 @@ export default class JitsiConference extends Listenable {
         room.removeListener(
             XMPPEvents.MEETING_ID_SET,
             this._sendConferenceJoinAnalyticsEvent
+        );
+        room.removeListener(
+            XMPPEvents.P2P_TERMINATION_REQUIRED,
+            this._onP2PTerminationRequired
         );
         room.removeListener(
             XMPPEvents.SESSION_ACCEPT,
@@ -5238,7 +5271,13 @@ export default class JitsiConference extends Listenable {
      */
     public joinLobby(displayName: string, email: string): Promise<void> {
         if (this.room) {
-            return this.room.getLobby().join(displayName, email);
+            if (!this.room.getLobby()?.lobbyRoom?.joined) {
+                return this.room.getLobby().join(displayName, email);
+            } else {
+                logger.warn("Already joined the lobby");
+
+                return Promise.resolve();
+            }
         }
 
         return Promise.reject(new Error("The conference not started"));

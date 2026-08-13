@@ -1,5 +1,6 @@
 import { MockRTC } from '../RTC/MockClasses';
 import SDP from '../sdp/SDP';
+import Statistics from '../statistics/statistics';
 import { parseXML, findAll, findFirst } from '../util/XMLUtils';
 import { XMPPEvents } from '../../service/xmpp/XMPPEvents';
 
@@ -191,6 +192,58 @@ describe('JingleSessionPC', () => {
             expect(updateRemoteSourcesSpy).toHaveBeenCalledWith(sourceInfo, false);
         });
 
+        it('should parse the mid parameter when present', () => {
+            const jingle = parseXML(
+                    `<jingle xmlns='urn:xmpp:jingle:1'>
+                        <content name='audio'>
+                            <description xmlns='urn:xmpp:jingle:apps:rtp:1' media='audio'>
+                                <source xmlns='urn:xmpp:jingle:apps:rtp:ssma:0' ssrc='1234' name='source1' owner='peer'>
+                                    <parameter name='msid' value='stream1'/>
+                                    <parameter name='mid' value='a0'/>
+                                </source>
+                            </description>
+                        </content>
+                    </jingle>`
+            );
+
+            expect(jingle).not.toBe(null);
+
+            if (!jingle) {
+                return;
+            }
+
+            const sourceAddElem = findAll(jingle.documentElement, ':scope>content');
+
+            sourceInfo = jingleSession._processSourceMapFromJingle(sourceAddElem, true);
+            expect(sourceInfo.size).toBe(1);
+            expect(sourceInfo.get('source1').mid).toBe('a0');
+        });
+
+        it('leaves mid null when no mid parameter is present', () => {
+            const jingle = parseXML(
+                    `<jingle xmlns='urn:xmpp:jingle:1'>
+                        <content name='audio'>
+                            <description xmlns='urn:xmpp:jingle:apps:rtp:1' media='audio'>
+                                <source xmlns='urn:xmpp:jingle:apps:rtp:ssma:0' ssrc='1234' name='source1' owner='peer'>
+                                    <parameter name='msid' value='stream1'/>
+                                </source>
+                            </description>
+                        </content>
+                    </jingle>`
+            );
+
+            expect(jingle).not.toBe(null);
+
+            if (!jingle) {
+                return;
+            }
+
+            const sourceAddElem = findAll(jingle.documentElement, ':scope>content');
+
+            sourceInfo = jingleSession._processSourceMapFromJingle(sourceAddElem, true);
+            expect(sourceInfo.get('source1').mid).toBeNull();
+        });
+
         it('should handle multiple ssrcs belonging to the same source', () => {
             const jingle = parseXML(
                     `<jingle xmlns='urn:xmpp:jingle:1'>
@@ -307,6 +360,136 @@ describe('JingleSessionPC', () => {
 
             expect(removeSsrcOwnersSpy).toHaveBeenCalledWith([ 1234, 5678, 4321, 8765 ]);
             expect(updateRemoteSourcesSpy).toHaveBeenCalledWith(sourceInfo, false);
+        });
+
+        it('ignores a source whose ssrc is not a valid 32-bit decimal integer', () => {
+            const jingle = parseXML(
+                    `<jingle xmlns='urn:xmpp:jingle:1'>
+                        <content name='video'>
+                            <description xmlns='urn:xmpp:jingle:apps:rtp:1' media='video'>
+                                <source xmlns='urn:xmpp:jingle:apps:rtp:ssma:0' ssrc='(.+)+$' name='evil' owner='peer'>
+                                    <parameter name='msid' value='stream1'/>
+                                </source>
+                                <source xmlns='urn:xmpp:jingle:apps:rtp:ssma:0' ssrc='99999999999999999999' name='big' owner='peer'>
+                                    <parameter name='msid' value='stream2'/>
+                                </source>
+                                <source xmlns='urn:xmpp:jingle:apps:rtp:ssma:0' ssrc='1234' name='ok' owner='peer'>
+                                    <parameter name='msid' value='stream3'/>
+                                </source>
+                            </description>
+                        </content>
+                    </jingle>`
+            );
+
+            const sourceAddElem = findAll(jingle.documentElement, ':scope>content');
+
+            sourceInfo = jingleSession._processSourceMapFromJingle(sourceAddElem, true);
+
+            expect(sourceInfo.has('evil')).toBe(false);
+            expect(sourceInfo.has('big')).toBe(false);
+            expect(sourceInfo.get('ok').ssrcList).toEqual([ '1234' ]);
+            expect(setSsrcOwnerSpy).toHaveBeenCalledWith(1234, null, 'ok');
+            expect(setSsrcOwnerSpy).not.toHaveBeenCalledWith(NaN, jasmine.anything(), 'evil');
+        });
+
+        it('ignores an ssrc-group whose semantics is not a known value', () => {
+            const jingle = parseXML(
+                    `<jingle xmlns='urn:xmpp:jingle:1'>
+                        <content name='video'>
+                            <description xmlns='urn:xmpp:jingle:apps:rtp:1' media='video'>
+                                <source xmlns='urn:xmpp:jingle:apps:rtp:ssma:0' ssrc='1234' name='source1' owner='peer'>
+                                    <parameter name='msid' value='stream1'/>
+                                </source>
+                                <source xmlns='urn:xmpp:jingle:apps:rtp:ssma:0' ssrc='5678' name='source1' owner='peer'>
+                                    <parameter name='msid' value='stream1'/>
+                                </source>
+                                <ssrc-group xmlns='urn:xmpp:jingle:apps:rtp:ssma:0' semantics='(.+)+$'>
+                                    <source xmlns='urn:xmpp:jingle:apps:rtp:ssma:0' ssrc='1234'/>
+                                    <source xmlns='urn:xmpp:jingle:apps:rtp:ssma:0' ssrc='5678'/>
+                                </ssrc-group>
+                            </description>
+                        </content>
+                    </jingle>`
+            );
+
+            const sourceAddElem = findAll(jingle.documentElement, ':scope>content');
+
+            sourceInfo = jingleSession._processSourceMapFromJingle(sourceAddElem, true);
+
+            expect(sourceInfo.get('source1').groups).toEqual([]);
+        });
+    });
+
+    describe('_recoverWedgedAudioSource', () => {
+        let addOrRemoveSpy, peerconnection, pushSpy;
+
+        /**
+         * Builds a minimal mock of a remote audio track.
+         *
+         * @param {number} ssrc - The track SSRC.
+         * @param {string} source - The source name.
+         * @param {string} owner - The owner endpoint id.
+         * @returns {object}
+         */
+        function mockTrack(ssrc: number, source: string, owner = 'owner-A'): any {
+            return {
+                getParticipantId: () => owner,
+                getSourceName: () => source,
+                getSsrc: () => ssrc
+            };
+        }
+
+        /**
+         * Runs the recovery task that was queued on the modification queue.
+         *
+         * @returns {void}
+         */
+        function runQueuedTask(): void {
+            const workFunction = pushSpy.calls.mostRecent().args[0];
+
+            workFunction(() => { }); // eslint-disable-line no-empty-function
+        }
+
+        beforeEach(() => {
+            peerconnection = jingleSession.peerconnection;
+            addOrRemoveSpy = spyOn(jingleSession as any, '_addOrRemoveRemoteStream');
+            spyOn(Statistics, 'sendAnalytics');
+
+            // Capture (do not run) the queued recovery task so it can be invoked deterministically.
+            pushSpy = spyOn(jingleSession.modificationQueue, 'push');
+        });
+
+        it('recycles the source via source-remove then source-add when the slot is unchanged', () => {
+            spyOn(peerconnection, 'getTrackBySSRC').and.returnValue(mockTrack(111, 'source-A'));
+
+            (jingleSession as any)._recoverWedgedAudioSource(mockTrack(111, 'source-A'));
+            runQueuedTask();
+
+            expect(addOrRemoveSpy).toHaveBeenCalledTimes(2);
+            expect(addOrRemoveSpy.calls.argsFor(0)[0]).toBe(false); // source-remove first
+            expect(addOrRemoveSpy.calls.argsFor(1)[0]).toBe(true); // source-add second
+            expect(Statistics.sendAnalytics).toHaveBeenCalled();
+        });
+
+        it('skips recovery when the slot was remapped to a different source', () => {
+            // The SSRC now belongs to a different source (a remap landed between detection and execution).
+            spyOn(peerconnection, 'getTrackBySSRC').and.returnValue(mockTrack(111, 'source-B'));
+
+            (jingleSession as any)._recoverWedgedAudioSource(mockTrack(111, 'source-A'));
+            runQueuedTask();
+
+            expect(addOrRemoveSpy).not.toHaveBeenCalled();
+            expect(Statistics.sendAnalytics).not.toHaveBeenCalled();
+        });
+
+        it('skips recovery when the slot was removed', () => {
+            spyOn(peerconnection, 'getTrackBySSRC').and.returnValue(null);
+
+            (jingleSession as any)._recoverWedgedAudioSource(mockTrack(111, 'source-A'));
+            runQueuedTask();
+
+            expect(addOrRemoveSpy).not.toHaveBeenCalled();
+            expect(Statistics.sendAnalytics).not.toHaveBeenCalled();
         });
     });
 });

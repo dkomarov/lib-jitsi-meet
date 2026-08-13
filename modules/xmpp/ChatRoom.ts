@@ -14,7 +14,7 @@ import Settings from '../settings/Settings';
 import EventEmitterForwarder from '../util/EventEmitterForwarder';
 import Listenable from '../util/Listenable';
 import { getJitterDelay } from '../util/Retry';
-import { exists, findAll, findFirst, getAttribute, getText } from '../util/XMLUtils';
+import { exists, findAll, findFirst, getAttribute, getText, stripXMLInvalidChars } from '../util/XMLUtils';
 
 import AVModeration from './AVModeration';
 import BreakoutRooms from './BreakoutRooms';
@@ -1084,6 +1084,11 @@ export default class ChatRoom extends Listenable {
                 this.eventEmitter.emit(XMPPEvents.PHONE_NUMBER_CHANGED);
                 break;
             }
+            case 'etherpad':
+                if (member.isFocus) {
+                    this._processNode(node, from);
+                }
+                break;
             default: {
                 if (node.tagName.startsWith('jitsi_participant_')) {
                     participantProperties
@@ -1128,20 +1133,29 @@ export default class ChatRoom extends Listenable {
      * @param message
      * @param elementName
      * @param replyToId
+     * @param messageId - Optional explicit stanza id
      */
-    public sendMessage(message: string, elementName: string, replyToId?: string): void {
-        const msg = $msg({
+    public sendMessage(message: string, elementName: string, replyToId?: string, messageId?: string): void {
+        const attrs: Record<string, string> = {
             to: this.roomjid,
             type: 'groupchat'
-        });
+        };
+
+        if (messageId) {
+            attrs.id = messageId;
+        }
+
+        const msg = $msg(attrs);
+
+        const cleanMessage = stripXMLInvalidChars(message);
 
         // We are adding the message in a packet extension. If this element
         // is different from 'body', we add a custom namespace.
         // e.g. for 'json-message' extension of message stanza.
         if (elementName === 'body') {
-            msg.c(elementName, {}, message);
+            msg.c(elementName, {}, cleanMessage);
         } else {
-            msg.c(elementName, { xmlns: 'http://jitsi.org/jitmeet' }, message);
+            msg.c(elementName, { xmlns: 'http://jitsi.org/jitmeet' }, cleanMessage);
         }
 
         if (replyToId) {
@@ -1149,7 +1163,7 @@ export default class ChatRoom extends Listenable {
         }
 
         this.connection.send(msg);
-        this.eventEmitter.emit(XMPPEvents.SENDING_CHAT_MESSAGE, message);
+        this.eventEmitter.emit(XMPPEvents.SENDING_CHAT_MESSAGE, cleanMessage);
     }
 
     /**
@@ -1186,29 +1200,37 @@ export default class ChatRoom extends Listenable {
      * @param elementName
      * @param useDirectJid
      * @param replyToId
+     * @param messageId
      */
-    public sendPrivateMessage(id: string, message: string, elementName: string, useDirectJid: boolean = false, replyToId?: string): void {
+    public sendPrivateMessage(id: string, message: string, elementName: string, useDirectJid: boolean = false, replyToId?: string, messageId?: string): void {
         const targetJid = useDirectJid ? id : `${this.roomjid}/${id}`;
-        const msg = $msg({ to: targetJid,
-            type: 'chat' });
+        const attrs: Record<string, string> = { to: targetJid,
+            type: 'chat' };
+
+        if (messageId) {
+            attrs.id = messageId;
+        }
+
+        const msg = $msg(attrs);
+
+        const cleanMessage = stripXMLInvalidChars(message);
 
         // We are adding the message in packet. If this element is different
         // from 'body', we add our custom namespace for the same.
         // e.g. for 'json-message' message extension.
         if (elementName === 'body') {
-            msg.c(elementName, message).up();
+            msg.c(elementName, cleanMessage).up();
         } else {
-            msg.c(elementName, { xmlns: 'http://jitsi.org/jitmeet' }, message)
+            msg.c(elementName, { xmlns: 'http://jitsi.org/jitmeet' }, cleanMessage)
                 .up();
         }
 
         if (replyToId) {
             msg.c('reply', { to: replyToId });
         }
-
         this.connection.send(msg);
         this.eventEmitter.emit(
-            XMPPEvents.SENDING_PRIVATE_CHAT_MESSAGE, message);
+            XMPPEvents.SENDING_PRIVATE_CHAT_MESSAGE, cleanMessage);
     }
     /* eslint-enable max-params */
 
@@ -1217,7 +1239,7 @@ export default class ChatRoom extends Listenable {
      * @param subject
      */
     public setSubject(subject: string): void {
-        const valueToProcess = subject ? subject.trim() : subject;
+        const valueToProcess = subject ? stripXMLInvalidChars(subject.trim()) : subject;
 
         if (valueToProcess === this.subject) {
             // subject already set to the new value
@@ -1228,6 +1250,7 @@ export default class ChatRoom extends Listenable {
             type: 'groupchat' });
 
         msg.c('subject', valueToProcess);
+        this.subject = valueToProcess;
         this.connection.send(msg);
     }
 
@@ -1558,7 +1581,12 @@ export default class ChatRoom extends Listenable {
                 // a race where we have sent a conference request to jicofo and jicofo was about to leave or just left
                 // because of no participants in the room, and we tried to create the room, without having
                 // permissions for that (only jicofo creates rooms)
-                if (txt === 'Room creation is restricted') {
+                if (txt === 'Room creation is restricted'
+                    // or case when using jwt, where we connected and then lost connection and restored it
+                    // and failed to join the call before jicofo leaves,
+                    // or send a conference-request and got a connection problem before joining but jicofo already left
+                    || exists(pres,
+                        ':scope>error[type="cancel"]>room-does-not-exist[*|xmlns="http://jitsi.org/jitmeet"]')) {
                     type = AUTH_ERROR_TYPES.ROOM_CREATION_RESTRICTION;
 
                     if (!this.options.disableRoomCreationRetry) {
@@ -1591,6 +1619,24 @@ export default class ChatRoom extends Listenable {
                 } else if (exists(pres,
                     ':scope>error[type="cancel"]>no-visitors-lobby[*|xmlns="jitsi:visitors"]')) {
                     type = AUTH_ERROR_TYPES.NO_VISITORS_LOBBY;
+                }
+
+                // A breakout room refusing our own (re)join presence with a generic
+                // not-allowed. This happens on reconnect when our session is no longer a
+                // member of the breakout. Don't surface a hard CONFERENCE_FAILED ("you do
+                // not have permission to join the call") - route the user back to the main
+                // room via the normal move-to-room flow instead.
+                if (type === AUTH_ERROR_TYPES.GENERAL
+                        && from === this.myroomjid
+                        && this.getBreakoutRooms()?.isBreakoutRoom()) {
+                    const mainRoomJid = this.getBreakoutRooms().getMainRoomJid();
+
+                    if (mainRoomJid) {
+                        logger.warn(`Breakout join not-allowed for ${from}; moving back to main room ${mainRoomJid}`);
+                        this.eventEmitter.emit(XMPPEvents.BREAKOUT_ROOMS_MOVE_TO_ROOM, mainRoomJid);
+
+                        return;
+                    }
                 }
 
                 this.eventEmitter.emit(XMPPEvents.ROOM_CONNECT_NOT_ALLOWED_ERROR, type, txt);

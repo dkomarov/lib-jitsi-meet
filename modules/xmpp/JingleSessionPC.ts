@@ -9,10 +9,12 @@ import { MediaDirection } from '../../service/RTC/MediaDirection';
 import { MediaType } from '../../service/RTC/MediaType';
 import { SSRC_GROUP_SEMANTICS } from '../../service/RTC/StandardVideoQualitySettings';
 import { VideoType } from '../../service/RTC/VideoType';
-import { AnalyticsEvents } from '../../service/statistics/AnalyticsEvents';
+import { AnalyticsEvents, createAudioWedgeRecoveryEvent } from '../../service/statistics/AnalyticsEvents';
 import { XMPPEvents } from '../../service/xmpp/XMPPEvents';
 import { XEP } from '../../service/xmpp/XMPPExtensioProtocols';
 import JitsiLocalTrack from '../RTC/JitsiLocalTrack';
+import JitsiRemoteTrack from '../RTC/JitsiRemoteTrack';
+import RemoteAudioWedgeDetector from '../RTC/RemoteAudioWedgeDetector';
 import { SS_DEFAULT_FRAME_RATE } from '../RTC/ScreenObtainer';
 import TraceablePeerConnection, { IAudioQuality, IVideoQuality } from '../RTC/TraceablePeerConnection';
 import browser from '../browser';
@@ -22,6 +24,7 @@ import { SDPDiffer } from '../sdp/SDPDiffer';
 import SDPUtil from '../sdp/SDPUtil';
 import Statistics from '../statistics/statistics';
 import AsyncQueue, { ClearedQueueError } from '../util/AsyncQueue';
+import { TraceParentExtension } from '../util/OTel';
 import { exists, findAll, findFirst, getAttribute } from '../util/XMLUtils';
 
 import JingleSession from './JingleSession';
@@ -52,6 +55,30 @@ const DEFAULT_MAX_STATS: number = 300;
 const ICE_CAND_GATHERING_TIMEOUT: number = 150;
 
 /**
+ * Matches a plain decimal string (no sign, no separators). Used as the first check on a signaled ssrc attribute.
+ * @type {RegExp}
+ */
+const SSRC_PATTERN = /^\d+$/;
+
+/**
+ * The largest valid RTP SSRC, i.e. the unsigned 32-bit maximum (RFC 5576).
+ * @type {number}
+ */
+const MAX_SSRC = 0xFFFFFFFF;
+
+/**
+ * Checks that a signaled ssrc attribute is a plain decimal string within the unsigned 32-bit SSRC range (RFC 5576).
+ * Signaled ssrcs are validated before use since they end up in SDP text, string lookups, and {@code Number()}
+ * coercion (a digit string above the 32-bit range would lose integer precision when coerced).
+ *
+ * @param {string} ssrc - The raw ssrc attribute value.
+ * @returns {boolean} Whether the value is a valid SSRC.
+ */
+function isValidSsrc(ssrc: string): boolean {
+    return SSRC_PATTERN.test(ssrc) && Number(ssrc) <= MAX_SSRC;
+}
+
+/**
  * Reads the endpoint ID given a string which represents either the endpoint's full JID, or the endpoint ID itself.
  * @param {String} jidOrEndpointId A string which is either the full JID of a participant, or the ID of an
  * endpoint/participant.
@@ -69,23 +96,33 @@ function getEndpointId(jidOrEndpointId: string): string {
  * @param {String} msid The "msid" attribute.
  */
 function _addSourceElement(description: any, s: any, ssrc_: number, msid: string): void {
-    description.c('source', {
+    const source = description.c('source', {
         name: s.source,
         ssrc: ssrc_,
         videoType: s.videoType?.toLowerCase(),
         xmlns: XEP.SOURCE_ATTRIBUTES
-    })
-        .c('parameter', {
-            name: 'msid',
-            value: msid
-        })
-        .up()
-        .c('ssrc-info', {
-            owner: s.owner,
-            xmlns: 'http://jitsi.org/jitmeet'
-        })
-        .up()
-        .up();
+    });
+
+    source.c('parameter', {
+        name: 'msid',
+        value: msid
+    }).up();
+
+    // The mid the bridge stamps on this source's packets (mid-based demuxing under SSRC rewriting). Used as the
+    // m-line's mid so the negotiated SDP matches the stamped extension.
+    if (s.mid) {
+        source.c('parameter', {
+            name: 'mid',
+            value: s.mid
+        }).up();
+    }
+
+    source.c('ssrc-info', {
+        owner: s.owner,
+        xmlns: 'http://jitsi.org/jitmeet'
+    }).up();
+
+    source.up();
 }
 
 /**
@@ -173,6 +210,7 @@ export default class JingleSessionPC extends JingleSession {
     private _gatheringReported: boolean;
     private _xmppListeners: Array<() => void>;
     private _removeSenderVideoConstraintsChangeListener: Nullable<() => void>;
+    private _audioWedgeDetector: Nullable<RemoteAudioWedgeDetector>;
     private usesCodecSelectionAPI: boolean;
     private wasConnected: boolean;
     private isReconnect: boolean;
@@ -427,6 +465,8 @@ export default class JingleSessionPC extends JingleSession {
          */
         this.establishmentDuration = undefined;
 
+        this._audioWedgeDetector = null;
+
         this._xmppListeners = [];
         this._xmppListeners.push(
             connection.addCancellableListener(
@@ -571,6 +611,28 @@ export default class JingleSessionPC extends JingleSession {
     }
 
     /**
+     * Starts the remote audio wedge watchdog for this session if applicable. The watchdog only runs against a JVB
+     * connection that uses SSRC rewriting, since that is the only configuration affected by the Chrome/WebRTC
+     * audio-demux wedge. It is started once the connection is established and is a no-op on subsequent ICE
+     * (re)connections.
+     *
+     * @returns {void}
+     */
+    private _maybeStartAudioWedgeDetector(): void {
+        if (this._audioWedgeDetector
+                || this.isP2P
+                || !FeatureFlags.isSsrcRewritingSupported()
+                || this.options.startSilent) {
+            return;
+        }
+
+        this._audioWedgeDetector = new RemoteAudioWedgeDetector(this.peerconnection, {
+            onWedgeDetected: track => this._recoverWedgedAudioSource(track)
+        });
+        this._audioWedgeDetector.start();
+    }
+
+    /**
      * Takes in a jingle offer iq, returns the new sdp offer that can be set as remote description in the
      * peerconnection.
      *
@@ -636,8 +698,17 @@ export default class JingleSessionPC extends JingleSession {
 
                 for (const source of sources) {
                     const ssrc = getAttribute(source, 'ssrc');
+
+                    if (!isValidSsrc(ssrc)) {
+                        logger.warn(`${this} Ignoring source with invalid ssrc=${ssrc}`);
+
+                        // eslint-disable-next-line no-continue
+                        continue;
+                    }
+
                     const sourceName = getAttribute(source, 'name');
                     const msid = getAttribute(findFirst(source, ':scope>parameter[name="msid"]'), 'value');
+                    const mid = getAttribute(findFirst(source, ':scope>parameter[name="mid"]'), 'value');
                     let videoType = getAttribute(source, 'videoType');
 
                     // If the videoType is DESKTOP_HIGH_FPS for remote tracks, we should treat it as DESKTOP.
@@ -651,6 +722,7 @@ export default class JingleSessionPC extends JingleSession {
                         sourceDescription.set(sourceName, {
                             groups: [],
                             mediaType,
+                            mid,
                             msid,
                             ssrcList: [ ssrc ],
                             videoType
@@ -679,12 +751,22 @@ export default class JingleSessionPC extends JingleSession {
 
                 findAll(description, ':scope>ssrc-group').forEach(group => {
                     const semantics = getAttribute(group, 'semantics');
+
+                    if (!Object.values(SSRC_GROUP_SEMANTICS).includes(semantics as SSRC_GROUP_SEMANTICS)) {
+                        logger.warn(`${this} Ignoring ssrc-group with unknown semantics=${semantics}`);
+
+                        return;
+                    }
+
                     const groupSsrcs = [];
 
                     findAll(group, ':scope>source').forEach(source => {
                         groupSsrcs.push(getAttribute(source, 'ssrc'));
                     });
 
+                    // A group's member ssrcs are only used if the group's ssrc set matches a source's (already
+                    // validated) ssrcList below, so a group referencing an invalid ssrc can never be attached and
+                    // does not need a separate numeric check here.
                     for (const [ sourceName, { ssrcList } ] of sourceDescription) {
                         if (isEqual(ssrcList.slice().sort(), groupSsrcs.slice().sort())) {
                             sourceDescription.get(sourceName).groups.push({
@@ -700,6 +782,85 @@ export default class JingleSessionPC extends JingleSession {
         sourceDescription.size && this.peerconnection.updateRemoteSources(sourceDescription, isAdd);
 
         return sourceDescription;
+    }
+
+    /**
+     * Recovers a remote audio source that the {@link RemoteAudioWedgeDetector} has flagged as wedged (mapped and
+     * unmuted, but receiving no inbound RTP). The recovery recycles just that source by synthesizing a source-remove
+     * followed by a source-add, reusing the same machinery as {@link processSourceMap}. The source-remove rejects the
+     * source's m-line (forcing Chrome to delete the stuck receive stream) and the source-add re-signals the same SSRC
+     * on a fresh m-line, which binds cleanly. Both operations are scoped to the single affected source.
+     *
+     * The recovery is gated by a guard that runs on the modification queue: the bridge can remap the slot (the same
+     * rewritten SSRC) to a different source, or remove it entirely, between detection and execution. The guard
+     * re-resolves the track by SSRC at execution time and skips the recovery if the SSRC is no longer mapped to the
+     * source that was detected as wedged - letting the normal sources-map flow own the slot and the watchdog re-detect
+     * on a later cycle. This prevents recycling a source with stale owner/source-name metadata.
+     *
+     * @param {JitsiRemoteTrack} track - The wedged remote audio track.
+     * @returns {void}
+     */
+    private _recoverWedgedAudioSource(track: JitsiRemoteTrack): void {
+        const ssrc = track.getSsrc();
+        const detectedSource = track.getSourceName();
+
+        if (typeof ssrc !== 'number' || !detectedSource) {
+            logger.warn(`${this} Cannot recover wedged audio source, missing ssrc/source-name`);
+
+            return;
+        }
+
+        const workFunction = (finishedCallback: (error?) => void) => {
+            // The slot may have been remapped or removed between detection and now. getTrackBySSRC always resolves to a
+            // remote track for a rewritten remote SSRC.
+            const currentTrack = this.peerconnection?.getTrackBySSRC(ssrc) as Nullable<JitsiRemoteTrack>;
+
+            if (!currentTrack || currentTrack.getSourceName() !== detectedSource) {
+                logger.warn(`${this} Skipping wedge recovery for audio source ${detectedSource} (ssrc=${ssrc}): the `
+                    + `slot was remapped or removed (now=${currentTrack?.getSourceName() ?? 'gone'}). The watchdog `
+                    + 'will re-detect if it is still wedged.');
+                finishedCallback();
+
+                return;
+            }
+
+            const source = currentTrack.getSourceName();
+            const owner = currentTrack.getParticipantId();
+
+            logger.warn(`${this} Recycling wedged remote audio source ${source} (ssrc=${ssrc}, owner=${owner})`);
+
+            // Builds a single-source Jingle "content" element for the wedged source, identical in shape to the ones
+            // produced by processSourceMap for an audio source-add.
+            const buildSourceNode = () => {
+                const src = { owner, source };
+                const msid = `remote-audio-${++this.numRemoteAudioSources}`;
+                const node = $build('content', {
+                    name: MediaType.AUDIO,
+                    xmlns: 'urn:xmpp:jingle:1'
+                }).c('description', {
+                    media: MediaType.AUDIO,
+                    xmlns: XEP.RTP_MEDIA
+                });
+
+                _addSourceElement(node, src, ssrc, `${msid} ${msid}`);
+
+                return node.up().node;
+            };
+
+            this._addOrRemoveRemoteStream(false /* remove */, buildSourceNode());
+            this._addOrRemoveRemoteStream(true /* add */, buildSourceNode());
+
+            Statistics.sendAnalytics(createAudioWedgeRecoveryEvent({
+                owner,
+                'source_name': source,
+                ssrc
+            }));
+
+            finishedCallback();
+        };
+
+        logger.debug(`${this} Queued wedge recovery task for audio source ${detectedSource} (ssrc=${ssrc})`);
+        this.modificationQueue.push(workFunction);
     }
 
     /**
@@ -923,7 +1084,7 @@ export default class JingleSessionPC extends JingleSession {
      * @param {function(error)} failure called when we receive an error response or when the request has timed out.
      * @returns {void}
      */
-    private _sendSessionAccept(success: () => void, failure: (error: IJingleError) => void) {
+    private _sendSessionAccept(success: () => void, failure: (error: IJingleError) => void, trace?: TraceParentExtension) {
         // NOTE: since we're just reading from it, we don't need to be within
         //  the modification queue to access the local description
         const localSDP = new SDP(this.peerconnection.localDescription.sdp, this.isP2P);
@@ -949,6 +1110,9 @@ export default class JingleSessionPC extends JingleSession {
         if (typeof this.options.channelLastN === 'number' && this.options.channelLastN >= 0) {
             // @ts-ignore will be fixed after merge of sdp
             localSDP.initialLastN = this.options.channelLastN;
+        }
+        if (trace != null) {
+            accept.c(trace.ELEMENT, trace.asAttributes()).up();
         }
         localSDP.toJingle(
             accept,
@@ -1342,6 +1506,8 @@ export default class JingleSessionPC extends JingleSession {
             success: () => void,
             failure: (error: any) => void,
             localTracks: JitsiLocalTrack[] = []): void {
+        const trace = TraceParentExtension.fromElement(jingleOffer);
+
         this.setOfferAnswerCycle(
             jingleOffer,
             () => {
@@ -1369,7 +1535,7 @@ export default class JingleSessionPC extends JingleSession {
                 error => {
                     failure(error);
                     this.room.eventEmitter.emit(XMPPEvents.SESSION_ACCEPT_ERROR, this, error);
-                });
+                }, trace);
             },
             failure,
             localTracks);
@@ -1544,6 +1710,9 @@ export default class JingleSessionPC extends JingleSession {
     public close(): void {
         this.state = JingleSessionState.ENDED;
         this.establishmentDuration = undefined;
+
+        this._audioWedgeDetector?.stop();
+        this._audioWedgeDetector = null;
 
         if (this.peerconnection) {
             this.peerconnection.onicecandidate = null;
@@ -1754,6 +1923,8 @@ export default class JingleSessionPC extends JingleSession {
                     isStable = true;
                     this.room.eventEmitter.emit(XMPPEvents.CONNECTION_RESTORED, this);
                 }
+
+                this._maybeStartAudioWedgeDetector();
 
                 // Add a workaround for an issue on chrome in Unified plan when the local endpoint is the offerer.
                 // The 'signalingstatechange' event for 'stable' is handled after the 'iceconnectionstatechange' event

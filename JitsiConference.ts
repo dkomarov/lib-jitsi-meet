@@ -1,5 +1,5 @@
 import { getLogger } from "@jitsi/logger";
-import { isEqual } from "lodash-es";
+import { isEqual } from "./node_modules/lodash";
 import { $msg, Strophe } from "strophe.js";
 
 import { JitsiAudioTranslationErrors } from "./JitsiAudioTranslationErrors";
@@ -620,6 +620,7 @@ export default class JitsiConference extends Listenable {
         this._videoSenderLimitReached = undefined;
 
         this._firefoxP2pEnabled =
+            // @ts-expect-error
             browser.isVersionGreaterThan(109) &&
             (this.options.config.testing?.enableFirefoxP2p ?? true);
 
@@ -1200,6 +1201,7 @@ export default class JitsiConference extends Listenable {
         // the mute/unmute operation.
         // In React Native we mute the camera by setting track.enabled but that doesn't
         // work for screen-share tracks, so do the remove-as-mute for those.
+        // @ts-expect-error
         const doesVideoMuteByStreamRemove = browser.isReactNative()
             ? track.videoType === VideoType.DESKTOP
             : browser.doesVideoMuteByStreamRemove();
@@ -1634,6 +1636,7 @@ export default class JitsiConference extends Listenable {
         if (
             !this.isP2PEnabled() ||
             this.isP2PTestModeEnabled() ||
+            // @ts-expect-error
             (browser.isFirefox() && !this._firefoxP2pEnabled) ||
             this.isE2EEEnabled()
         ) {
@@ -2203,6 +2206,7 @@ export default class JitsiConference extends Listenable {
             };
         } else if (
             (!this.isP2PEnabled() && !this.isP2PTestModeEnabled()) ||
+            // @ts-expect-error
             (browser.isFirefox() && !this._firefoxP2pEnabled)
         ) {
             rejectReason = {

@@ -203,16 +203,16 @@ class ScreenObtainer {
     private _createObtainStreamMethod() {
         const supportsGetDisplayMedia = browser.supportsGetDisplayMedia();
 
-        // @ts-expect-error
+        // @ts-ignore
         if (browser.isElectron()) {
             return this._obtainScreenOnElectron;
-            // @ts-expect-error
+            // @ts-ignore
         } else if (browser.isReactNative() && supportsGetDisplayMedia) {
             return this.obtainScreenFromGetDisplayMediaRN;
         } else if (supportsGetDisplayMedia) {
             return this._obtainScreenFromGetDisplayMedia;
         }
-        // @ts-expect-error
+        // @ts-ignore
         logger.warn("Screen sharing not supported on ", browser.getName());
 
         return null;
@@ -480,20 +480,20 @@ class ScreenObtainer {
                     screenShareSettings?.desktopSystemAudio || "include");
 
             // Allow users to seamlessly switch which tab they are sharing without having to select the tab again.
-            // @ts-expect-error
+            // @ts-ignore
             browser.isEngineVersionGreaterThan(106) &&
                 (constraintOpts.surfaceSwitching =
                     screenShareSettings?.desktopSurfaceSwitching || "include");
 
             // Allow a user to be shown a preference for what screen is to be captured, default: unset.
-            // @ts-expect-error
+            // @ts-ignore
             browser.isEngineVersionGreaterThan(106) &&
                 screenShareSettings?.desktopDisplaySurface &&
                 (video.displaySurface =
                     screenShareSettings?.desktopDisplaySurface);
 
             // Allow users to select the current tab as a capture source, default: exclude.
-            // @ts-expect-error
+            // @ts-ignore
             browser.isEngineVersionGreaterThan(111) &&
                 (constraintOpts.selfBrowserSurface =
                     screenShareSettings?.desktopSelfBrowserSurface ||
@@ -509,7 +509,7 @@ class ScreenObtainer {
         }
 
         // Allow a user to be shown a preference for what screen is to be captured.
-        // @ts-expect-error
+        // @ts-ignore
         if (browser.isSafari() && screenShareSettings?.desktopDisplaySurface) {
             video.displaySurface = screenShareSettings?.desktopDisplaySurface;
         }
@@ -535,7 +535,7 @@ class ScreenObtainer {
 
                 // Apply min fps constraints to the track so that 0Hz mode doesn't kick in.
                 // https://bugs.chromium.org/p/webrtc/issues/detail?id=15539
-                // @ts-expect-error
+                // @ts-ignore
                 if (browser.isChromiumBased()) {
                     const track = stream.getVideoTracks()[0];
                     let minFps = SS_DEFAULT_FRAME_RATE;

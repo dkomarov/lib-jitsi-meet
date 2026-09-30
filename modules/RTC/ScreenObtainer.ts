@@ -62,38 +62,6 @@ interface IObtainScreenOptions {
 }
 
 /**
- * Interface for audio constraints.
- */
-interface IAudioConstraints {
-    mandatory?: {
-        chromeMediaSource?: string;
-        chromeMediaSourceId?: string;
-    };
-    optional?: {
-        autoGainControl?: boolean;
-        channelCount?: number;
-        echoCancellation?: boolean;
-        noiseSuppression?: boolean;
-    };
-}
-
-/**
- * Interface for legacy video constraints.
- */
-interface ILegacyVideoConstraints {
-    mandatory: {
-        chromeMediaSource: string;
-        chromeMediaSourceId: string;
-        maxFrameRate: number;
-        maxHeight: number;
-        maxWidth: number;
-        minFrameRate: number;
-        minHeight?: number;
-        minWidth?: number;
-    };
-}
-
-/**
  * Interface for modern video constraints.
  */
 interface IVideoConstraints {
@@ -159,7 +127,6 @@ export const SS_DEFAULT_FRAME_RATE = 5;
  * Handles obtaining a stream from a screen capture on different browsers.
  */
 class ScreenObtainer {
-    private _electronSkipDisplayMedia: boolean;
     public obtainStream: Nullable<
         (
             onSuccess: (result: IScreenCaptureResult) => void,
@@ -176,7 +143,6 @@ class ScreenObtainer {
     constructor() {
         this.obtainStream = this._createObtainStreamMethod();
         this.options = {};
-        this._electronSkipDisplayMedia = false;
     }
 
     /**

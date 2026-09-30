@@ -33,7 +33,10 @@ import { E2EEncryption } from "./modules/e2ee/E2EEncryption";
 import E2ePing from "./modules/e2eping/e2eping";
 import FeatureFlags from "./modules/flags/FeatureFlags";
 import { LiteModeContext } from "./modules/litemode/LiteModeContext";
-import { QualityController } from "./modules/qualitycontrol/QualityController";
+import {
+    P2PFallbackReason,
+    QualityController,
+} from "./modules/qualitycontrol/QualityController";
 import { IReceiverVideoConstraints } from "./modules/qualitycontrol/ReceiveVideoController";
 import JibriSession from "./modules/recording/JibriSession";
 import RecordingManager, {
@@ -49,7 +52,12 @@ import Listenable from "./modules/util/Listenable";
 import { isValidNumber, safeSubtract } from "./modules/util/MathUtil";
 import RandomUtil from "./modules/util/RandomUtil";
 import { getJitterDelay } from "./modules/util/Retry";
-import { findAll, findFirst, getAttribute } from "./modules/util/XMLUtils";
+import {
+    findAll,
+    findFirst,
+    getAttribute,
+    getFirstChildElement,
+} from "./modules/util/XMLUtils";
 import ComponentsVersions from "./modules/version/ComponentsVersions";
 import JitsiVideoSIPGWSession from "./modules/videosipgw/JitsiVideoSIPGWSession";
 import VideoSIPGW from "./modules/videosipgw/VideoSIPGW";
@@ -70,6 +78,7 @@ import XMPP, {
 } from "./modules/xmpp/xmpp";
 import { BridgeVideoType } from "./service/RTC/BridgeVideoType";
 import { CodecMimeType } from "./service/RTC/CodecMimeType";
+import { IceRestartReason } from "./service/RTC/IceRestartReason";
 import { MediaType } from "./service/RTC/MediaType";
 import { RTCEvents } from "./service/RTC/RTCEvents";
 import {
@@ -82,6 +91,7 @@ import {
     getSourceNameForJitsiTrack,
     isTranslatedSourceName,
 } from "./service/RTC/SignalingLayer";
+import { TransportCost } from "./service/RTC/TransportCost";
 import { VideoType } from "./service/RTC/VideoType";
 import { MAX_CONNECTION_RETRIES } from "./service/connectivity/Constants";
 import {
@@ -140,6 +150,7 @@ export interface IConferenceOptions {
         e2eping?: {
             enabled?: boolean;
         };
+        enableIceRestart?: boolean;
         enableNoAudioDetection?: boolean;
         enableNoisyMicDetection?: boolean;
         enableTalkWhileMuted?: boolean;
@@ -163,6 +174,7 @@ export interface IConferenceOptions {
         statisticsId?: string;
         testing?: {
             allowMultipleTracks?: boolean;
+            disableAV1DecodeForFF?: boolean;
             enableAV1ForFF?: boolean;
             enableFirefoxP2p?: boolean;
             forceInitiator?: boolean;
@@ -228,6 +240,19 @@ const TRANSLATION_REQUEST_TIMEOUT = 15000;
  * @type {number}
  */
 const JINGLE_SI_TIMEOUT: number = 5000;
+
+/**
+ * How long (ms) to wait for ICE to recover after an in-place ICE restart (triggered by an ICE failure) before
+ * falling back to a session restart.
+ */
+const JVB_ICE_RESTART_RECOVERY_TIMEOUT = 15000;
+
+/**
+ * How many consecutive stats samples must show P2P on a costlier path than the JVB before falling back. ICE keeps
+ * looking for a better pair after the session comes up, so a single sample can still reflect the relayed pair that
+ * got it connected.
+ */
+const P2P_TCP_RELAY_SAMPLES = 2;
 
 /**
  * Default source language for transcribing the local participant.
@@ -313,6 +338,8 @@ export default class JitsiConference extends Listenable {
     private _desktopSharingFrameRate?: number;
     private _numberOfParticipantsOnJoin?: number;
     private _delayedIceFailed?: IceFailedHandling;
+    private _p2pFallbackLatched: boolean;
+    private _p2pTcpRelaySamples: number = 0;
     private _audioAnalyser?: VADAudioAnalyser;
     private _noAudioSignalDetection?: NoAudioSignalDetection;
     private _signalingLayer: SignalingLayerImpl;
@@ -579,6 +606,12 @@ export default class JitsiConference extends Listenable {
          */
         this.p2pJingleSession = null;
 
+        /**
+         * Whether the conference has given up on P2P for the rest of the call.
+         * @type {boolean}
+         */
+        this._p2pFallbackLatched = false;
+
         this.videoSIPGWHandler = new VideoSIPGW(this.room);
         this.recordingManager = new RecordingManager(this.room);
 
@@ -801,6 +834,7 @@ export default class JitsiConference extends Listenable {
         const qualityOptions = {
             enableAdaptiveMode: config.videoQuality?.enableAdaptiveMode,
             jvb: {
+                disableAV1DecodeForFF: config.testing?.disableAV1DecodeForFF,
                 disabledCodec: _getCodecMimeType(
                     config.videoQuality?.disabledCodec
                 ),
@@ -833,6 +867,11 @@ export default class JitsiConference extends Listenable {
 
         this.qualityController = new QualityController(this, qualityOptions);
 
+        this.on(
+            JitsiConferenceEvents._P2P_FALLBACK_NEEDED,
+            (reason: P2PFallbackReason) => this._fallbackFromP2P(reason)
+        );
+
         if (!this.statistics) {
             this.statistics = new Statistics(this, {
                 // @ts-ignore
@@ -848,6 +887,10 @@ export default class JitsiConference extends Listenable {
                 callstats_name: this._statsCurrentId,
             });
         }
+
+        this.statistics.addConnectionStatsListener(
+            (tpc: TraceablePeerConnection) => this._checkP2PTransportCost(tpc)
+        );
 
         this.eventManager.setupChatRoomListeners();
 
@@ -1740,6 +1783,7 @@ export default class JitsiConference extends Listenable {
                     p.hasFeature(FEATURE_JIGASI)
             ) !== undefined;
         const shouldBeInP2P =
+            !this._p2pFallbackLatched &&
             peerCount === 1 &&
             !hasBotPeer &&
             !this._hasVisitors &&
@@ -1747,7 +1791,8 @@ export default class JitsiConference extends Listenable {
             this._buildDesiredTranslations().size === 0;
 
         logger.debug(
-            `P2P? peerCount: ${peerCount}, hasBotPeer: ${hasBotPeer} => ${shouldBeInP2P}`
+            `P2P? peerCount: ${peerCount}, hasBotPeer: ${hasBotPeer}, ` +
+                `fallbackLatched: ${this._p2pFallbackLatched} => ${shouldBeInP2P}`
         );
 
         return shouldBeInP2P;
@@ -1756,6 +1801,8 @@ export default class JitsiConference extends Listenable {
     /**
      * Stops the current P2P session.
      * @param {Object} options - Options for stopping P2P.
+     * @param {boolean} options.latchFallback - Whether P2P should stay off for the rest of the call, so that no
+     * later participant change or remote re-invite can re-establish it.
      * @param {string} options.reason - One of the Jingle "reason" element
      * names as defined by https://xmpp.org/extensions/xep-0166.html#def-reason
      * @param {string} options.reasonDescription - Text description that will be
@@ -1766,12 +1813,14 @@ export default class JitsiConference extends Listenable {
      */
     private _stopP2PSession(
         options: {
+            latchFallback?: boolean;
             reason?: string;
             reasonDescription?: string;
             requestRestart?: boolean;
         } = {}
     ): void {
         const {
+            latchFallback = false,
             reason = "success",
             reasonDescription = "Turning off P2P session",
             requestRestart = false,
@@ -1781,6 +1830,10 @@ export default class JitsiConference extends Listenable {
             logger.error("No P2P session to be stopped!");
 
             return;
+        }
+
+        if (latchFallback) {
+            this._p2pFallbackLatched = true;
         }
 
         const wasP2PEstablished = this.isP2PActive();
@@ -2242,6 +2295,91 @@ export default class JitsiConference extends Listenable {
     }
 
     /**
+     * Signals a fallback when P2P settled on a TCP relayed path and the JVB has a cheaper one.
+     * @param {TraceablePeerConnection} tpc - The peer connection that reported stats.
+     * @private
+     */
+    private _checkP2PTransportCost(tpc: TraceablePeerConnection): void {
+        if (
+            !this.p2pJingleSession ||
+            !this.jvbJingleSession ||
+            this.p2pJingleSession.peerconnection !== tpc
+        ) {
+            this._p2pTcpRelaySamples = 0;
+
+            return;
+        }
+
+        const p2pCost = tpc.getSelectedTransportCost();
+        const jvbCost =
+            this.jvbJingleSession.peerconnection?.getSelectedTransportCost();
+
+        // Relative on purpose: abandoning P2P only helps if the bridge has a better path. Undetermined costs are
+        // retried on the next poll without counting against the streak.
+        if (typeof p2pCost !== "number" || typeof jvbCost !== "number") {
+            return;
+        }
+
+        if (
+            p2pCost !== TransportCost.RELAY_TCP ||
+            jvbCost >= TransportCost.RELAY_TCP
+        ) {
+            this._p2pTcpRelaySamples = 0;
+
+            return;
+        }
+
+        if (++this._p2pTcpRelaySamples < P2P_TCP_RELAY_SAMPLES) {
+            logger.debug(
+                `P2P is on a TCP relayed path (sample ${this._p2pTcpRelaySamples} of ` +
+                    `${P2P_TCP_RELAY_SAMPLES}), waiting for it to hold`
+            );
+
+            return;
+        }
+
+        logger.warn(
+            "P2P settled on a TCP relayed path while the JVB has a better one " +
+                `(p2p: ${p2pCost}, jvb: ${jvbCost}), falling back`
+        );
+        this.eventEmitter.emit(
+            JitsiConferenceEvents._P2P_FALLBACK_NEEDED,
+            P2PFallbackReason.TCP_RELAY
+        );
+    }
+
+    /**
+     * Abandons a P2P session that is no longer fit to carry the call and moves the conference back to the JVB.
+     * @param {P2PFallbackReason} reason - What triggered the fallback.
+     * @private
+     */
+    private _fallbackFromP2P(reason: P2PFallbackReason): void {
+        if (!this.p2pJingleSession) {
+            return;
+        }
+
+        logger.warn(`Falling back to the JVB, reason: ${reason}`);
+
+        // Permanent property to find affected calls later; the event carries the reason to tell the causes apart.
+        Statistics.analytics.addPermanentProperties({
+            p2pQualityFallback: true,
+        });
+        Statistics.sendAnalyticsAndLog(
+            createP2PEvent(AnalyticsEvents.ACTION_P2P_QUALITY_FALLBACK, {
+                reason,
+            })
+        );
+
+        // Stopped directly rather than through _maybeStartOrStopP2P, whose stop path is disabled under
+        // config.testing.p2pTestMode.
+        this._stopP2PSession({
+            latchFallback: true,
+            reason: "connectivity-error",
+            reasonDescription: `P2P ${reason}`,
+        });
+    }
+
+    /**
      * Handles CONNECTION_INTERRUPTED event.
      * @param {JingleSessionPC} session - The Jingle session.
      * @private
@@ -2249,6 +2387,15 @@ export default class JitsiConference extends Listenable {
     private _onIceConnectionInterrupted(session: JingleSessionPC): void {
         if (session.isP2P) {
             this.isP2PConnectionInterrupted = true;
+
+            // P2P ICE is not given a chance to recover. Resuming the JVB is local only, so falling back costs
+            // nothing, whereas riding out a disconnect that never recovers costs the whole call.
+            if (this.p2pJingleSession === session) {
+                this.eventEmitter.emit(
+                    JitsiConferenceEvents._P2P_FALLBACK_NEEDED,
+                    P2PFallbackReason.ICE_DISCONNECTED
+                );
+            }
         } else {
             this.isJvbConnectionInterrupted = true;
         }
@@ -2278,6 +2425,7 @@ export default class JitsiConference extends Listenable {
                 );
             }
             this._stopP2PSession({
+                latchFallback: true,
                 reason: "connectivity-error",
                 reasonDescription: "ICE FAILED",
             });
@@ -2292,11 +2440,20 @@ export default class JitsiConference extends Listenable {
                 1000 /* min. delay */
             );
 
-            this._delayedIceFailed = new IceFailedHandling(this);
             setTimeout(() => {
-                logger.error(`triggering ice restart after ${jitterDelay} `);
-                this._delayedIceFailed.start();
                 this._iceRestarts++;
+                if (this.isIceRestartSupported()) {
+                    logger.info(
+                        `Attempting an in-place ICE restart after ${jitterDelay}`
+                    );
+                    this._restartJvbIceWithFallback();
+                } else {
+                    logger.error(
+                        `triggering ice restart after ${jitterDelay} `
+                    );
+                    this._delayedIceFailed = new IceFailedHandling(this);
+                    this._delayedIceFailed.start();
+                }
             }, jitterDelay);
         } else if (this.jvbJingleSession === session) {
             logger.warn(
@@ -2313,6 +2470,43 @@ export default class JitsiConference extends Listenable {
                 JitsiConferenceErrors.ICE_FAILED
             );
         }
+    }
+
+    /**
+     * Attempts an in-place ICE restart of the JVB session, falling back to the legacy session restart
+     * (session-terminate with a restart request, handled by Jicofo with a re-invite) if the request fails or if
+     * ICE doesn't recover within a timeout.
+     *
+     * @private
+     * @returns {void}
+     */
+    private _restartJvbIceWithFallback(): void {
+        const fallback = (message: string) => {
+            logger.warn(`${message}, falling back to a session restart`);
+            this._delayedIceFailed = new IceFailedHandling(this);
+            this._delayedIceFailed.start();
+        };
+
+        this.restartJvbIce(IceRestartReason.ICE_FAILED)
+            .then(() => {
+                setTimeout(() => {
+                    const iceState =
+                        this.jvbJingleSession?.getIceConnectionState();
+
+                    if (iceState !== "connected" && iceState !== "completed") {
+                        fallback(
+                            `ICE not recovered (state=${iceState}) after an in-place ICE restart`
+                        );
+                    }
+                }, JVB_ICE_RESTART_RECOVERY_TIMEOUT);
+            })
+            .catch((error) =>
+                fallback(
+                    `In-place ICE restart request failed (${
+                        error?.message ?? error
+                    })`
+                )
+            );
     }
 
     /**
@@ -2826,8 +3020,9 @@ export default class JitsiConference extends Listenable {
             this._pendingTranslationRequests.delete(id);
         }
 
-        const condition = findFirst(stanza, "error")?.firstElementChild
-            ?.localName;
+        const condition = getFirstChildElement(
+            findFirst(stanza, "error")
+        )?.localName;
         const error = (
             Object.values(JitsiAudioTranslationErrors) as string[]
         ).includes(condition ?? "")
@@ -2940,6 +3135,44 @@ export default class JitsiConference extends Listenable {
         );
 
         this.qualityController.audioController.setIncludeSources(include);
+    }
+
+    /**
+     * Checks whether an in-place ICE restart of the JVB session can be used: it must be enabled in the client
+     * configuration ('enableIceRestart').
+     *
+     * @returns {boolean}
+     */
+    public isIceRestartSupported(): boolean {
+        return Boolean(this.options.config.enableIceRestart);
+    }
+
+    /**
+     * Triggers an in-place ICE restart of the JVB session: Jicofo is asked to have the bridge create a new ICE
+     * agent with fresh credentials while the old one keeps carrying media (make-before-break). The bridge's new
+     * transport comes back asynchronously as a Jingle 'transport-info' and is applied by
+     * {@link JingleSessionPC.onBridgeIceRestartTransport}, so the promise returned here settling only means that
+     * the request itself was accepted. Trigger from the console: `APP.conference._room.restartJvbIce()`.
+     *
+     * @param {IceRestartReason} reason - Why the restart was triggered, for logs and analytics.
+     * @returns {Promise<void>} - Resolves when Jicofo has accepted the request, rejects otherwise.
+     */
+    public restartJvbIce(
+        reason: IceRestartReason = IceRestartReason.API
+    ): Promise<void> {
+        if (!this.isIceRestartSupported()) {
+            return Promise.reject(
+                new Error("ICE restart is not supported (disabled in config)")
+            );
+        }
+
+        const session = this.jvbJingleSession;
+
+        if (!session) {
+            return Promise.reject(new Error("No JVB Jingle session"));
+        }
+
+        return session.restartIce(reason);
     }
 
     /**
@@ -3746,6 +3979,47 @@ export default class JitsiConference extends Listenable {
     }
 
     /**
+     * Sends a message retraction to the other participants in the conference.
+     *
+     * @param {string} messageId - The ID of the message being retracted.
+     * @param {string} [receiverId] - The intended recipient if the message is private.
+     * @param {boolean} [useFullJid=false] - Whether receiverId is already a full JID.
+     */
+    public sendMessageRetraction(
+        messageId: string,
+        receiverId?: string,
+        useFullJid = false
+    ): void {
+        if (this.room) {
+            this.room.sendMessageRetraction(messageId, receiverId, useFullJid);
+        }
+    }
+
+    /**
+     * Sends a correction of a message this participant sent earlier (XEP-0308).
+     *
+     * @param {string} messageId - The id of the message being corrected.
+     * @param {string} message - The new text.
+     * @param {string} [receiverId] - Set for a private message, the recipient.
+     * @param {boolean} [useFullJid=false] - Whether receiverId is a full jid.
+     */
+    public sendMessageCorrection(
+        messageId: string,
+        message: string,
+        receiverId?: string,
+        useFullJid = false
+    ): void {
+        if (this.room) {
+            this.room.sendMessageCorrection(
+                messageId,
+                message,
+                receiverId,
+                useFullJid
+            );
+        }
+    }
+
+    /**
      * Sends private text message to another participant of the conference.
      * @param {string} id - The ID of the participant to send a private message.
      * @param {string} message - The text message.
@@ -3773,6 +4047,16 @@ export default class JitsiConference extends Listenable {
                 messageId
             );
         }
+    }
+
+    /**
+     * Sends a moderation request for a message.
+     *
+     * @param {string} messageId - The id of the message.
+     * @param {string} [reason] - Optional moderation reason
+     */
+    public moderateMessage(messageId: string, reason?: string): void {
+        this.room?.moderateMessage(messageId, reason);
     }
 
     /**
@@ -4287,6 +4571,16 @@ export default class JitsiConference extends Listenable {
      */
     public muteRemoteAudio(muted: boolean): void {
         this.qualityController.audioController.muteRemoteAudio(muted);
+    }
+
+    /**
+     * Whether the deployment supports audio translation, i.e. the audio-translation component was advertised
+     * via service discovery. Translation requests are dropped when it is not.
+     *
+     * @returns {boolean}
+     */
+    public isAudioTranslationSupported(): boolean {
+        return Boolean(this.xmpp.audioTranslationComponentAddress);
     }
 
     /**
@@ -5229,22 +5523,28 @@ export default class JitsiConference extends Listenable {
      * Sets a property for the local participant.
      * @param {string} name - The name of the property.
      * @param {string} value - The value of the property.
+     * @param {boolean} [useRawKeys] - Skip the "jitsi_participant_" prefix when true.
      * @returns {void}
      */
     public setLocalParticipantProperty(
         name: string,
-        value: string | string[]
+        value: string | string[],
+        useRawKeys = false
     ): void {
-        this.sendCommand(`jitsi_participant_${name}`, { value });
+        this.sendCommand(useRawKeys ? name : `jitsi_participant_${name}`, {
+            value,
+        });
     }
 
     /**
      * Sets multiple properties for the local participant in a single presence update.
      * @param {Record<string, string | string[]>} properties - Object of property names to values.
+     * @param {boolean} [useRawKeys] - Skip the "jitsi_participant_" prefix when true.
      * @returns {void}
      */
     public setLocalParticipantProperties(
-        properties: Record<string, string | string[]>
+        properties: Record<string, string | string[]>,
+        useRawKeys = false
     ): void {
         if (!this.room) {
             return;
@@ -5253,10 +5553,10 @@ export default class JitsiConference extends Listenable {
         let changed = false;
 
         for (const name of Object.keys(properties)) {
-            const wasChanged = this.room.addOrReplaceInPresence(
-                `jitsi_participant_${name}`,
-                { value: properties[name] }
-            );
+            const tagName = useRawKeys ? name : `jitsi_participant_${name}`;
+            const wasChanged = this.room.addOrReplaceInPresence(tagName, {
+                value: properties[name],
+            });
 
             changed = changed || Boolean(wasChanged);
         }
@@ -5269,10 +5569,14 @@ export default class JitsiConference extends Listenable {
     /**
      * Removes a property for the local participant and sends the updated presence.
      * @param {string} name - The name of the property to remove.
+     * @param {boolean} [useRawKeys] - Skip the "jitsi_participant_" prefix when true.
      * @returns {void}
      */
-    public removeLocalParticipantProperty(name: string): void {
-        this.removeCommand(`jitsi_participant_${name}`);
+    public removeLocalParticipantProperty(
+        name: string,
+        useRawKeys = false
+    ): void {
+        this.removeCommand(useRawKeys ? name : `jitsi_participant_${name}`);
         if (this.room) {
             this.room.sendPresence();
         }
@@ -5292,11 +5596,16 @@ export default class JitsiConference extends Listenable {
     /**
      * Gets a local participant property.
      * @param {string} name - The name of the property to retrieve.
+     * @param {boolean} [useRawKeys] - Skip the "jitsi_participant_" prefix when true.
      * @returns {string|undefined} The value of the property if it exists, otherwise undefined.
      */
-    public getLocalParticipantProperty(name: string): Optional<string> {
+    public getLocalParticipantProperty(
+        name: string,
+        useRawKeys = false
+    ): Optional<string> {
+        const tagName = useRawKeys ? name : `jitsi_participant_${name}`;
         const property = this.room.presMap.nodes.find(
-            (prop) => prop.tagName === `jitsi_participant_${name}`
+            (prop) => prop.tagName === tagName
         );
 
         return property ? property.value : undefined;
@@ -5780,6 +6089,16 @@ export default class JitsiConference extends Listenable {
     }
 
     /**
+     * Returns <tt>true</tt> when the room handles message moderation and editing
+     * server side. Clients should only offer those actions when it does.
+     *
+     * @returns {boolean} whether the room applies message moderation.
+     */
+    public isMessageModerationSupported(): boolean {
+        return Boolean(this.room?.messageModerationSupported);
+    }
+
+    /**
      * Enables lobby by moderators
      *
      * @returns {Promise} resolves when lobby room is joined or rejects with the error.
@@ -5891,6 +6210,46 @@ export default class JitsiConference extends Listenable {
         if (this.room) {
             return this.room.getLobby().removeMessageHandler(handler);
         }
+    }
+
+    /**
+     * Sends a message retraction to the lobby room.
+     * @param {string} messageId - The ID of the message being retracted.
+     * @param {string} [id] - The participant id, if the message was private.
+     * @returns {void}
+     */
+    public sendLobbyMessageRetraction(messageId: string, id?: string): void {
+        const lobby = this.room?.getLobby();
+
+        lobby?.sendMessageRetraction(messageId, id);
+    }
+
+    /**
+     * Adds a message retraction listener to the lobby room.
+     * @param {Function} listener - called with (messageId, participantId).
+     * @returns {Optional<EventListener>}
+     */
+    public addLobbyMessageRetractionListener(
+        listener: (messageId: string, participantId: string) => void
+    ): Optional<EventListener> {
+        const lobby = this.room?.getLobby();
+
+        return lobby?.addMessageRetractionListener(
+            listener
+        ) as Optional<EventListener>;
+    }
+
+    /**
+     * Removes a message retraction handler from the lobby room.
+     * @param {Function} handler - The handler function to remove.
+     * @returns {void}
+     */
+    public removeLobbyMessageRetractionHandler(
+        handler: (messageId: string, participantId: string) => void
+    ): void {
+        const lobby = this.room?.getLobby();
+
+        lobby?.removeMessageRetractionHandler(handler);
     }
 
     /**

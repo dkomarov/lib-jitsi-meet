@@ -25,6 +25,17 @@
 export enum AnalyticsEvents {
 
     /**
+     * The "action" value for Jingle events which indicates that an in-place ICE restart was requested.
+     */
+    ACTION_JINGLE_ICE_RESTART_REQUESTED = 'ice-restart.requested',
+
+    /**
+     * The "action" value for Jingle events which indicates that an in-place ICE restart completed successfully,
+     * i.e. the renegotiation completed and the new local transport was signalled.
+     */
+    ACTION_JINGLE_ICE_RESTART_SUCCESS = 'ice-restart.success',
+
+    /**
      * The "action" value for Jingle events which indicates that the Jingle session
      * was restarted (TODO: verify/fix the documentation)
      */
@@ -76,6 +87,11 @@ export enum AnalyticsEvents {
      * The "action" value for P2P events which indicates that something failed.
      */
     ACTION_P2P_FAILED = 'failed',
+
+    /**
+     * The "action" value for P2P events which indicates the session was abandoned as unusable.
+     */
+    ACTION_P2P_QUALITY_FALLBACK = 'quality.fallback',
 
     /**
      * The "action" value for P2P events which indicates that a switch to
